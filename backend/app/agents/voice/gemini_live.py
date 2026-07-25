@@ -2,14 +2,31 @@
 CLAUDE.md 1.1). VAD tuned for warehouse-floor noise (~60dB): low start/end
 sensitivity so short phrases and ambient noise don't trigger false starts.
 
-CAVEAT: the exact `google-genai` Live API response shape (attribute names on
-the streamed message — transcript text, "is final" flag, confidence) could
-not be verified against a live session in this environment (no network, no
-API key). The connect/send/receive control flow follows the SDK's documented
-async-context-manager pattern, but confirm the response attribute paths
-against the installed `google-genai` version before relying on this in
-production — client-side field names on this API have changed between
-releases.
+VERIFIED against https://ai.google.dev/api/live and
+https://ai.google.dev/gemini-api/docs/live-guide (fetched 2026-07-25):
+- `session.send_realtime_input(audio=types.Blob(data=..., mime_type=...))`
+  and `response.server_content.input_transcription.text` are the documented
+  Python SDK shapes — confirmed correct as originally written.
+- `input_audio_transcription` MUST be set in `LiveConnectConfig`, or the
+  server never sends `input_transcription` at all. This was MISSING before
+  and is now added below — without it, `receive()` would silently yield
+  nothing, ever.
+- `BidiGenerateContentTranscription` has ONLY a `text` field. There is no
+  `finished`/`is_final` flag and NO confidence score anywhere in the
+  Live API's transcription messages. The previous version of this file
+  read non-existent `.finished` and `.confidence` attributes via `getattr`
+  with silent defaults (`False` / `None`) — meaning `is_final` was ALWAYS
+  False and no FINAL event would ever fire, and confidence was always None.
+  Finality is now derived from `server_content.turn_complete` instead
+  (accumulating transcript fragments until the turn completes).
+
+UNRESOLVED ARCHITECTURE GAP (needs a decision, not a code fix): CLAUDE.md
+§3.2's "si el score STT < 0.75, pedir repetir" rule assumes a per-utterance
+STT confidence score. Gemini's Live API genuinely does not provide one for
+input transcription (confirmed above) — this isn't a bug to patch, it's a
+capability gap in the provider ADR-001 chose. `TranscriptEvent.confidence`
+is always None here; `voice/session.py`'s threshold check against it needs
+a product decision (see the summary sent alongside this fix).
 """
 from __future__ import annotations
 
@@ -45,6 +62,8 @@ class GeminiLiveSTTProvider(STTProvider):
                     prefix_padding_ms=300,
                 ),
             ),
+            # Required or the server never sends input_transcription at all.
+            input_audio_transcription=types.AudioTranscriptionConfig(),
         )
         self._session_cm = self._client.aio.live.connect(model=MODEL_NAME, config=live_config)
         self._session = await self._session_cm.__aenter__()
@@ -59,16 +78,25 @@ class GeminiLiveSTTProvider(STTProvider):
     async def receive(self) -> AsyncIterator[TranscriptEvent]:
         if self._session is None:
             raise RuntimeError("call connect() before receive()")
+
+        accumulated_text = ""
         async for response in self._session.receive():
-            transcript = getattr(response.server_content, "input_transcription", None)
-            if transcript is None or not getattr(transcript, "text", None):
+            server_content = getattr(response, "server_content", None)
+            if server_content is None:
                 continue
-            is_final = bool(getattr(transcript, "finished", False))
-            yield TranscriptEvent(
-                type=TranscriptEventType.FINAL if is_final else TranscriptEventType.PARTIAL,
-                text=transcript.text,
-                confidence=getattr(transcript, "confidence", None),
-            )
+
+            transcript = getattr(server_content, "input_transcription", None)
+            if transcript is not None and getattr(transcript, "text", None):
+                accumulated_text += transcript.text
+                yield TranscriptEvent(
+                    type=TranscriptEventType.PARTIAL, text=accumulated_text, confidence=None
+                )
+
+            if getattr(server_content, "turn_complete", False):
+                yield TranscriptEvent(
+                    type=TranscriptEventType.FINAL, text=accumulated_text, confidence=None
+                )
+                accumulated_text = ""
 
     async def disconnect(self) -> None:
         if self._session_cm is not None:

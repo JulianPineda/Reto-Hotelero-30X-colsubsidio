@@ -2,11 +2,16 @@
 transcript using Gemini 1.5 Flash structured output (ADR-001 — replaces
 Claude Haiku, unifies the provider with the Voice Agent from T-005).
 
-CAVEAT: `response_schema` structured-output support is the more stable part
-of the `google-genai` SDK (unlike the Live API in gemini_live.py), but this
-was still not exercised against a live API call in this environment (no
-network, no API key) — confirm `client.aio.models.generate_content(...)`'s
-exact signature against the installed SDK version before relying on it.
+VERIFIED against https://ai.google.dev/api/generate-content (fetched
+2026-07-25): `client.models.generate_content` (and its async counterpart
+`client.aio.models.generate_content`, used below) is current and not
+deprecated — a newer "Interactions API" exists alongside it for newer
+models, but this classic method is still fully documented and supported.
+`system_instruction`, `response_mime_type` and `response_schema` inside
+`GenerateContentConfig` are exactly the documented shape — no changes
+needed. (Note: the docs' own examples now use "gemini-3.6-flash"; this file
+still pins "gemini-1.5-flash" per ADR-001's explicit decision — upgrading
+that is a product call, not something to change based on doc examples.)
 """
 from __future__ import annotations
 

@@ -119,7 +119,7 @@ async def test_audit_endpoint_flags_threshold_break_with_same_shift_history():
     request = AuditRequest(
         oracle_code="HAR-001", quantity=14.0, unit="kg", warehouse_id=uuid.uuid4(), shift="morning"
     )
-    result = await audit(request, session=session)
+    result = await audit(request, session=session, _operator=None)
 
     assert result.is_flagged is True
     assert result.flag_type in {"threshold", "both"}
@@ -142,7 +142,7 @@ async def test_audit_endpoint_no_flag_when_within_range():
     request = AuditRequest(
         oracle_code="HAR-001", quantity=20.0, unit="kg", warehouse_id=uuid.uuid4(), shift="morning"
     )
-    result = await audit(request, session=session)
+    result = await audit(request, session=session, _operator=None)
 
     assert result.is_flagged is False
     assert result.flag_type is None

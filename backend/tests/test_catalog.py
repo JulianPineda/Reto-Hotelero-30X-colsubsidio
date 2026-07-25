@@ -139,7 +139,7 @@ async def test_homologate_uses_vector_search_when_enough_matches(monkeypatch):
     monkeypatch.setattr("app.agents.catalog.router.get_qdrant_client", _fake_get_qdrant_client)
 
     request = HomologateRequest(article="harina de trigo", warehouse_id=uuid.uuid4())
-    result = await homologate(request, session=_FakeSession(rows=[]))
+    result = await homologate(request, session=_FakeSession(rows=[]), _operator=None)
 
     assert result.oracle_code == "HAR-001"
     assert result.match_method == "vector_search"
@@ -158,7 +158,7 @@ async def test_homologate_falls_back_to_fuzzy_when_few_matches(monkeypatch):
     ]
 
     request = HomologateRequest(article="aceite", warehouse_id=uuid.uuid4())
-    result = await homologate(request, session=_FakeSession(rows=rows))
+    result = await homologate(request, session=_FakeSession(rows=rows), _operator=None)
 
     assert result.match_method == "fuzzy_fallback"
     assert len(result.alternatives) >= 1
@@ -172,7 +172,7 @@ async def test_homologate_sin_homologar_when_nothing_matches(monkeypatch):
     monkeypatch.setattr("app.agents.catalog.router.get_qdrant_client", _fake_get_qdrant_client)
 
     request = HomologateRequest(article="xyznonexistent", warehouse_id=uuid.uuid4())
-    result = await homologate(request, session=_FakeSession(rows=[]))
+    result = await homologate(request, session=_FakeSession(rows=[]), _operator=None)
 
     assert result.sin_homologar is True
     assert result.oracle_code is None

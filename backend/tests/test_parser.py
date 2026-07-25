@@ -34,7 +34,7 @@ async def test_parse_transcript_normalizes_unit(monkeypatch):
     monkeypatch.setattr(extractor, "extract", fake_extract)
 
     request = ParseRequest(transcript="veinte kilos de harina de trigo", session_id=uuid.uuid4())
-    result = await parse_transcript(request)
+    result = await parse_transcript(request, _operator=None)
 
     assert result.article == "harina de trigo"
     assert result.quantity == 20.0
@@ -48,7 +48,7 @@ async def test_parse_transcript_normalizes_galones(monkeypatch):
     monkeypatch.setattr(extractor, "extract", fake_extract)
 
     request = ParseRequest(transcript="noventa galones de aceite vegetal", session_id=uuid.uuid4())
-    result = await parse_transcript(request)
+    result = await parse_transcript(request, _operator=None)
 
     assert result.article == "aceite vegetal"
     assert result.quantity == 90.0
@@ -65,7 +65,7 @@ async def test_parse_transcript_allows_quantity_only(monkeypatch):
     monkeypatch.setattr(extractor, "extract", fake_extract)
 
     request = ParseRequest(transcript="catorce", session_id=uuid.uuid4())
-    result = await parse_transcript(request)
+    result = await parse_transcript(request, _operator=None)
 
     assert result.article is None
     assert result.quantity == 14.0
@@ -80,7 +80,7 @@ async def test_parse_transcript_raises_422_when_nothing_extracted(monkeypatch):
 
     request = ParseRequest(transcript="ruido ininteligible aaaa", session_id=uuid.uuid4())
     with pytest.raises(HTTPException) as exc_info:
-        await parse_transcript(request)
+        await parse_transcript(request, _operator=None)
 
     assert exc_info.value.status_code == 422
     assert exc_info.value.detail["error"] == "PARSE_FAILED"

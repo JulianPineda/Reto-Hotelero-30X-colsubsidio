@@ -71,7 +71,23 @@ app.include_router(catalog_router, prefix="/api/v1")
 from app.agents.auditor.router import router as auditor_router
 app.include_router(auditor_router, prefix="/api/v1")
 
-# Uncomment as each Epic is implemented:
-# from app.agents.exporter.router import router as exporter_router
-# from app.api.supervisor import router as supervisor_router
-# from app.api.warehouses import router as warehouses_router
+from app.api.supervisor import router as supervisor_router
+app.include_router(supervisor_router, prefix="/api/v1")
+
+from app.agents.exporter.router import router as exporter_router
+app.include_router(exporter_router, prefix="/api/v1")
+
+from app.api.warehouses import router as warehouses_router
+app.include_router(warehouses_router, prefix="/api/v1")
+
+from app.api.exports import router as exports_router
+app.include_router(exports_router, prefix="/api/v1")
+
+from app.api.sessions import router as sessions_router
+app.include_router(sessions_router, prefix="/api/v1")
+
+from app.api.count_items import router as count_items_router
+app.include_router(count_items_router, prefix="/api/v1")
+
+from app.api.auth import router as auth_router
+app.include_router(auth_router, prefix="/api/v1")

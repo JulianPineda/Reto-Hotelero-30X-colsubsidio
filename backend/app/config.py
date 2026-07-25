@@ -1,5 +1,7 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from typing import Annotated
+
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic import Field, field_validator
 
 
 class Settings(BaseSettings):
@@ -25,10 +27,21 @@ class Settings(BaseSettings):
     export_base_dir: str = "/app/exports"
 
     # CORS — explicit list, no wildcards (security rule)
-    allowed_origins: list[str] = Field(
+    # NoDecode: pydantic-settings otherwise tries to json.loads() any
+    # list-typed env var before validators ever run (so a field_validator
+    # alone can't intercept the comma-separated string .env.example uses —
+    # it would already have crashed on the JSON decode by then).
+    allowed_origins: Annotated[list[str], NoDecode] = Field(
         default=["http://localhost:3000"],
         description="Comma-separated list of allowed origins. No wildcards.",
     )
+
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def _split_comma_separated(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
     # STT thresholds (calibrate in field)
     stt_confidence_threshold: float = Field(default=0.75, ge=0.0, le=1.0)

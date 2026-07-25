@@ -1,17 +1,24 @@
 """PTT state machine + barge-in for one voice WebSocket connection.
 
-Orchestrates: audio -> STTProvider -> Parser Agent -> digit-by-digit
-confirmation. Catalog Agent homologation (T-009) and Auditor Agent anomaly
-flagging (EPIC-4) don't exist yet — `homologate` is where the Catalog Agent
-plugs in; until then it's a pass-through that never homologates and never
-flags (matches this ticket's own "funciona end-to-end con payload mock"
-acceptance criterion).
+Orchestrates: audio -> STTProvider -> Parser Agent -> Catalog Agent
+homologation -> (perishables re-ask, CLAUDE.md §3.6) -> digit-by-digit
+confirmation -> Orchestrator persistence (Auditor Agent + CountItem row +
+ItemCreated event, via the injected `persist_item` callback wrapping
+`services/orchestrator.py::persist_count_item`).
 
-State machine (EPIC-2-voice.md T-006):
+State machine (EPIC-2-voice.md T-006, extended by T-017 for perishables):
     idle -> listening (ptt_start)
     listening -> processing (ptt_stop)
-    processing -> confirming (transcript ready + confidence >= threshold)
+    processing -> confirming (transcript ready + confidence >= threshold,
+                               item is NOT perishable)
+    processing -> awaiting_expiry_date (transcript ready + confidence >=
+                               threshold, Catalog Agent flagged is_perishable)
     processing -> idle (confidence < threshold -> pide repetir)
+    awaiting_expiry_date -> confirming_expiry_date (spoken date parsed ok)
+    awaiting_expiry_date -> awaiting_expiry_date (date could not be parsed
+                               -> pide repetir la fecha)
+    confirming_expiry_date -> confirming (confirm=true -> sigue a cantidad)
+    confirming_expiry_date -> awaiting_expiry_date (confirm=false -> re-dictar fecha)
     confirming -> idle (confirm=true -> item saved)
     confirming -> listening (confirm=false -> re-dictar)
     confirming -> listening (barge_in -> interrumpir TTS)
@@ -20,12 +27,14 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import date
 from enum import StrEnum
 from uuid import UUID, uuid4
 
 from app.agents.parser import extractor
 from app.agents.parser.unit_normalizer import normalize_unit
 from app.agents.voice.confirmation import build_digit_confirmation
+from app.agents.voice.date_parser import build_spoken_date_confirmation, parse_spoken_date
 from app.agents.voice.schemas import SessionConfig, TranscriptEventType
 from app.agents.voice.stt_provider import STTProvider
 from app.config import settings
@@ -38,6 +47,8 @@ class VoiceState(StrEnum):
     LISTENING = "listening"
     PROCESSING = "processing"
     CONFIRMING = "confirming"
+    AWAITING_EXPIRY_DATE = "awaiting_expiry_date"
+    CONFIRMING_EXPIRY_DATE = "confirming_expiry_date"
 
 
 @dataclass
@@ -46,14 +57,34 @@ class PendingItem:
     article: str
     quantity: float
     unit: str
+    oracle_code: str | None = None
+    is_perishable: bool | None = None
+    expiry_date: date | None = None
 
 
 HomologateFn = Callable[[str], Awaitable[dict]]
+PersistItemFn = Callable[["PendingItem"], Awaitable[dict]]
 
 
 async def _default_homologate(article: str) -> dict:
-    """Stand-in until the Catalog Agent (T-009) exists."""
-    return {"oracle_code": None, "name": None, "sin_homologar": True}
+    """Stand-in for tests/dev — real wiring is `voice/router.py` passing a
+    callable built around `catalog/router.py::run_homologation()`."""
+    return {"oracle_code": None, "name": None, "is_perishable": None, "sin_homologar": True}
+
+
+async def _default_persist_item(item: "PendingItem") -> dict:
+    """Stand-in for tests/dev — real wiring is `voice/router.py` passing a
+    callable built around `services/orchestrator.py::persist_count_item()`.
+    Keeps the pre-persistence behavior (client-side id, nothing flagged, no
+    real sequence) for any caller that doesn't inject a real one."""
+    return {
+        "ok": True,
+        "item_id": str(item.item_id),
+        "is_flagged": False,
+        "flag_type": None,
+        "traffic_light": None,
+        "sequence": None,
+    }
 
 
 class VoicePTTSession:
@@ -62,10 +93,12 @@ class VoicePTTSession:
         stt_provider: STTProvider,
         session_config: SessionConfig,
         homologate: HomologateFn = _default_homologate,
+        persist_item: PersistItemFn = _default_persist_item,
     ) -> None:
         self.stt_provider = stt_provider
         self.session_config = session_config
         self.homologate = homologate
+        self.persist_item = persist_item
         self.state = VoiceState.IDLE
         self.low_confidence_attempts = 0
         self.pending_item: PendingItem | None = None
@@ -84,27 +117,35 @@ class VoicePTTSession:
         await self.stt_provider.send_audio(data)
 
     async def handle_ptt_stop(self) -> dict:
+        previous_state = self.state
         self.state = VoiceState.PROCESSING
 
         final_text: str | None = None
-        final_confidence = 0.0
+        final_confidence: float | None = None
         async for event in self.stt_provider.receive():
             if event.type == TranscriptEventType.FINAL:
                 final_text = event.text
-                final_confidence = event.confidence or 0.0
+                final_confidence = event.confidence
                 break
 
         if final_text is None:
-            self.state = VoiceState.IDLE
+            self.state = self._retry_state(previous_state)
             return {
                 "type": "error",
                 "code": "STT_UNAVAILABLE",
                 "message": "Error interno de procesamiento de voz.",
             }
 
-        if final_confidence < settings.stt_confidence_threshold:
+        # confidence is None when the STTProvider can't score it at all (the
+        # Gemini Live API adapter never can — see gemini_live.py) — treating
+        # that as 0.0 would fail CLAUDE.md's G4 gate on every single
+        # utterance. Providers that CAN score confidence (a future
+        # OpenAIRealtimeAdapter, for instance) still get the gate enforced.
+        # This is a stopgap, not a resolution — G4 as literally written
+        # cannot be satisfied by the STT provider ADR-001 chose.
+        if final_confidence is not None and final_confidence < settings.stt_confidence_threshold:
             self.low_confidence_attempts += 1
-            self.state = VoiceState.IDLE
+            self.state = self._retry_state(previous_state)
             if self.low_confidence_attempts >= MAX_LOW_CONFIDENCE_ATTEMPTS:
                 return {"type": "manual_fallback_offered"}
             return {
@@ -115,7 +156,20 @@ class VoicePTTSession:
             }
 
         self.low_confidence_attempts = 0
+
+        if previous_state == VoiceState.AWAITING_EXPIRY_DATE:
+            return self._handle_expiry_transcript(final_text)
+
         return await self._parse_and_confirm(final_text)
+
+    @staticmethod
+    def _retry_state(previous_state: VoiceState) -> VoiceState:
+        """Where to land after an STT failure/low-confidence result — back
+        to awaiting the expiry date if that's what we were listening for
+        (keeps `pending_item` alive), otherwise idle as before."""
+        if previous_state == VoiceState.AWAITING_EXPIRY_DATE:
+            return VoiceState.AWAITING_EXPIRY_DATE
+        return VoiceState.IDLE
 
     async def _parse_and_confirm(self, transcript: str) -> dict:
         raw = await extractor.extract(transcript)
@@ -135,22 +189,67 @@ class VoicePTTSession:
         article_name = homologation.get("name") or raw.article or ""
 
         item_id = uuid4()
-        self.pending_item = PendingItem(item_id=item_id, article=article_name, quantity=quantity, unit=unit)
-        self.state = VoiceState.CONFIRMING
+        self.pending_item = PendingItem(
+            item_id=item_id,
+            article=article_name,
+            quantity=quantity,
+            unit=unit,
+            oracle_code=homologation.get("oracle_code"),
+            is_perishable=homologation.get("is_perishable"),
+        )
 
-        digit_by_digit, display_text = build_digit_confirmation(quantity, unit, article_name)
+        if homologation.get("is_perishable"):
+            self.state = VoiceState.AWAITING_EXPIRY_DATE
+            return {
+                "type": "expiry_date_request",
+                "item_id": str(item_id),
+                "article": article_name,
+                "message": f"¿Cuál es la fecha de vencimiento de {article_name}?",
+            }
+
+        self.state = VoiceState.CONFIRMING
+        return self._build_quantity_confirmation(self.pending_item)
+
+    def _build_quantity_confirmation(self, item: PendingItem) -> dict:
+        digit_by_digit, display_text = build_digit_confirmation(item.quantity, item.unit, item.article)
         return {
             "type": "confirmation_request",
-            "item_id": str(item_id),
-            "oracle_code": homologation.get("oracle_code"),
-            "article": article_name,
-            "quantity": quantity,
-            "unit": unit,
+            "item_id": str(item.item_id),
+            "oracle_code": item.oracle_code,
+            "article": item.article,
+            "quantity": item.quantity,
+            "unit": item.unit,
+            "expiry_date": item.expiry_date.isoformat() if item.expiry_date else None,
             "digit_by_digit": digit_by_digit,
             "display_text": display_text,
         }
 
+    def _handle_expiry_transcript(self, transcript: str) -> dict:
+        assert self.pending_item is not None  # guaranteed by the AWAITING_EXPIRY_DATE transition
+
+        parsed = parse_spoken_date(transcript)
+        if parsed is None:
+            self.state = VoiceState.AWAITING_EXPIRY_DATE
+            return {
+                "type": "error",
+                "code": "DATE_PARSE_FAILED",
+                "message": "No se pudo entender la fecha de vencimiento. Por favor repítela.",
+            }
+
+        self.pending_item.expiry_date = parsed
+        self.state = VoiceState.CONFIRMING_EXPIRY_DATE
+        spoken = build_spoken_date_confirmation(parsed)
+        return {
+            "type": "expiry_date_confirmation_request",
+            "item_id": str(self.pending_item.item_id),
+            "expiry_date": parsed.isoformat(),
+            "display_text": f"¿Confirmas fecha de vencimiento: {spoken}?",
+        }
+
     async def handle_confirm(self, value: bool) -> dict:
+        if self.state == VoiceState.CONFIRMING_EXPIRY_DATE:
+            return self._handle_expiry_confirm(value)
+
         if self.state != VoiceState.CONFIRMING or self.pending_item is None:
             return {
                 "type": "error",
@@ -162,14 +261,49 @@ class VoicePTTSession:
             item = self.pending_item
             self.pending_item = None
             self.state = VoiceState.IDLE
-            # sequence: real persistence (CountItem row + event store) is
-            # the Orchestrator's job — not built yet, so no real sequence
-            # number exists here.
-            return {"type": "item_saved", "item_id": str(item.item_id), "is_flagged": False, "sequence": None}
+
+            result = await self.persist_item(item)
+            if not result.get("ok", True):
+                return {
+                    "type": "error",
+                    "code": result.get("code", "PERSIST_FAILED"),
+                    "message": result.get("message", "No se pudo guardar el ítem."),
+                }
+
+            return {
+                "type": "item_saved",
+                "item_id": result["item_id"],
+                "expiry_date": item.expiry_date.isoformat() if item.expiry_date else None,
+                "is_flagged": result["is_flagged"],
+                "flag_type": result.get("flag_type"),
+                "traffic_light": result.get("traffic_light"),
+                "sequence": result["sequence"],
+            }
 
         self.pending_item = None
         self.state = VoiceState.LISTENING
         return {"type": "listening"}
+
+    def _handle_expiry_confirm(self, value: bool) -> dict:
+        if self.pending_item is None:
+            return {
+                "type": "error",
+                "code": "INVALID_STATE",
+                "message": "No hay ítem pendiente de confirmación.",
+            }
+
+        if value:
+            self.state = VoiceState.CONFIRMING
+            return self._build_quantity_confirmation(self.pending_item)
+
+        self.pending_item.expiry_date = None
+        self.state = VoiceState.AWAITING_EXPIRY_DATE
+        return {
+            "type": "expiry_date_request",
+            "item_id": str(self.pending_item.item_id),
+            "article": self.pending_item.article,
+            "message": f"¿Cuál es la fecha de vencimiento de {self.pending_item.article}?",
+        }
 
     async def handle_barge_in(self) -> dict:
         self.state = VoiceState.LISTENING

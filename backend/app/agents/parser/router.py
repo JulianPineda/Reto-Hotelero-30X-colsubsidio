@@ -1,16 +1,20 @@
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.agents.parser import extractor
 from app.agents.parser.schemas import ParseRequest, ParseResponse
 from app.agents.parser.unit_normalizer import normalize_unit
+from app.agents.voice.schemas import OperatorClaims
+from app.api.deps import get_current_operator
 
 router = APIRouter(prefix="/agents", tags=["parser"])
 
 
 @router.post("/parse", response_model=ParseResponse)
-async def parse_transcript(request: ParseRequest) -> ParseResponse:
+async def parse_transcript(
+    request: ParseRequest, _operator: OperatorClaims = Depends(get_current_operator)
+) -> ParseResponse:
     raw = await extractor.extract(request.transcript)
 
     if raw.article is None and raw.quantity is None:
