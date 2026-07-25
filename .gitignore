@@ -4,3 +4,38 @@ __pycache__/
 .venv/
 venv/
 .env
+*.env.local
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Exports (never commit Oracle CSV exports)
+data/exports/
+exports/
+*.csv
+*.xlsx
+
+# Docker volumes
+postgres_data/
+qdrant_data/
+
+# Model cache (sentence-transformers downloads)
+.cache/
+models/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python build
+*.egg-info/
+dist/
+build/
+
