@@ -5,7 +5,10 @@ REQUIRES a real, disposable Postgres database (this test COMMITS real rows
 and writes a real CSV file to disk — it does not roll back, because the
 Exporter's background job opens its OWN connection via AsyncSessionLocal()
 and can only see data another connection has actually committed). Run this
-against a throwaway test schema, never against production data. Voice
+against a throwaway test schema, never against production data. Skipped by
+default — opt in with `RUN_E2E_DB_TESTS=1` (learned the hard way: a routine
+`pytest` run against the dev docker-compose stack left three permanent
+"PSL-TEST-*" warehouses + catalog items behind). Voice
 parsing and Catalog homologation (Gemini, Qdrant) are intentionally NOT
 exercised here — this test starts from already-parsed CountItem rows; the
 LLM-facing paths are covered separately by test_parser.py / test_catalog.py.
@@ -21,6 +24,7 @@ code paths, and asserts the tally that is actually consistent with that:
 """
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import date, timedelta
 from decimal import Decimal
@@ -44,6 +48,12 @@ from app.schemas.events import EventType
 from app.services.event_store import append_event, get_session_events
 
 
+@pytest.mark.skipif(
+    os.getenv("RUN_E2E_DB_TESTS") != "1",
+    reason="writes permanent, uncleaned rows to whatever DB it's pointed at "
+    "(see module docstring) — opt in with RUN_E2E_DB_TESTS=1 against a "
+    "disposable schema, never in a routine `pytest` run",
+)
 async def test_full_session_happy_path():
     suffix = uuid.uuid4().hex[:8]
     historical_values = [90.0, 92.0, 88.0, 91.0, 89.0]

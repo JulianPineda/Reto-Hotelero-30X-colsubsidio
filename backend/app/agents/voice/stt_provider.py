@@ -22,4 +22,20 @@ class STTProvider(ABC):
     async def receive(self) -> AsyncIterator[TranscriptEvent]: ...
 
     @abstractmethod
+    async def speak(self, text: str) -> None:
+        """Sends `text` to be read aloud (TTS) — the hands-free confirmation
+        readback CLAUDE.md §4 implies and EPIC-2-voice.md's state machine
+        names directly ("interrumpir TTS" on barge-in). Audio arrives
+        asynchronously via `receive_audio()`, not as a return value here."""
+        ...
+
+    @abstractmethod
+    async def receive_audio(self) -> AsyncIterator[str]:
+        """Base64-encoded PCM16 audio chunks synthesized in response to
+        `speak()` calls — a stream independent from `receive()`'s
+        transcript events, since a provider's underlying connection may
+        interleave both on one wire (see gemini_live.py)."""
+        ...
+
+    @abstractmethod
     async def disconnect(self) -> None: ...

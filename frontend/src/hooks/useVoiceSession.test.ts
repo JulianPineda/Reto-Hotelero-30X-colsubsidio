@@ -2,9 +2,15 @@ import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSessionStore } from '../store/sessionStore';
 import { useVoiceSession } from './useVoiceSession';
+import * as audioPlayback from '../services/audioPlayback';
 
 vi.mock('../services/audioCapture', () => ({
   startMicrophoneCapture: vi.fn().mockResolvedValue({ stop: vi.fn() }),
+}));
+
+vi.mock('../services/audioPlayback', () => ({
+  playChunk: vi.fn(),
+  stopAllAudio: vi.fn(),
 }));
 
 class FakeWebSocket {
@@ -35,10 +41,12 @@ beforeEach(() => {
   FakeWebSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeWebSocket);
   useSessionStore.getState().reset();
+  vi.mocked(audioPlayback.playChunk).mockClear();
+  vi.mocked(audioPlayback.stopAllAudio).mockClear();
 });
 
 describe('useVoiceSession', () => {
-  it('sends ptt_start immediately on startPTT', () => {
+  it('sends barge_in then ptt_start on startPTT, stopping any playing audio', () => {
     const { result } = renderHook(() => useVoiceSession('ws://test/voice/demo'));
     const ws = FakeWebSocket.instances[0];
 
@@ -46,7 +54,20 @@ describe('useVoiceSession', () => {
       result.current.startPTT();
     });
 
-    expect(JSON.parse(ws.sent[0])).toEqual({ type: 'ptt_start' });
+    expect(audioPlayback.stopAllAudio).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(ws.sent[0])).toEqual({ type: 'barge_in' });
+    expect(JSON.parse(ws.sent[1])).toEqual({ type: 'ptt_start' });
+  });
+
+  it('plays audio_out chunks as they arrive', () => {
+    renderHook(() => useVoiceSession('ws://test/voice/demo'));
+    const ws = FakeWebSocket.instances[0];
+
+    act(() => {
+      ws.emit({ type: 'audio_out', data: 'base64chunk==' });
+    });
+
+    expect(audioPlayback.playChunk).toHaveBeenCalledWith('base64chunk==');
   });
 
   it('stopPTT moves to processing locally and sends ptt_stop', () => {

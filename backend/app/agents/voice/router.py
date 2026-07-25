@@ -1,3 +1,4 @@
+import asyncio
 import base64
 from uuid import UUID
 
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.catalog.router import run_homologation
 from app.agents.voice.gemini_live import GeminiLiveSTTProvider
 from app.agents.voice.schemas import OperatorClaims, SessionConfig
-from app.agents.voice.session import HomologateFn, PendingItem, PersistItemFn, VoicePTTSession
+from app.agents.voice.session import AudioChunkFn, HomologateFn, PendingItem, PersistItemFn, VoicePTTSession
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.services.catalog_sync import get_qdrant_client
@@ -17,6 +18,22 @@ from app.services.orchestrator import SessionNotFoundError, UnknownOracleCodeErr
 from app.services.perishables import PerishableItemMissingExpiryError
 
 router = APIRouter(tags=["voice"])
+
+
+def _build_on_audio_chunk(websocket: WebSocket, send_lock: asyncio.Lock) -> AudioChunkFn:
+    """Wraps the WS connection into the `AudioChunkFn` shape
+    `VoicePTTSession` expects, relaying TTS audio from `speak()` calls
+    (see session.py) back to the browser as it arrives. Guarded by
+    `send_lock` because this fires from a background task
+    (`_relay_audio_out`) running concurrently with the main dispatch loop
+    below — both write to the same WebSocket, which Starlette doesn't
+    guarantee is safe without external serialization."""
+
+    async def on_audio_chunk(chunk_b64: str) -> None:
+        async with send_lock:
+            await websocket.send_json({"type": "audio_out", "data": chunk_b64})
+
+    return on_audio_chunk
 
 
 def _build_homologate(session: AsyncSession, qdrant_client: AsyncQdrantClient) -> HomologateFn:
@@ -107,15 +124,18 @@ async def voice_websocket(websocket: WebSocket, session_id: UUID, token: str = Q
 
     session_config = SessionConfig(session_id=session_id, operator_id=claims.operator_id)
     qdrant_client = get_qdrant_client()
+    send_lock = asyncio.Lock()
 
     async with AsyncSessionLocal() as db_session:
         homologate = _build_homologate(db_session, qdrant_client)
         persist_item = _build_persist_item(db_session, session_id, claims.operator_id)
+        on_audio_chunk = _build_on_audio_chunk(websocket, send_lock)
         voice_session = VoicePTTSession(
             stt_provider=GeminiLiveSTTProvider(),
             session_config=session_config,
             homologate=homologate,
             persist_item=persist_item,
+            on_audio_chunk=on_audio_chunk,
         )
 
         try:
@@ -123,7 +143,8 @@ async def voice_websocket(websocket: WebSocket, session_id: UUID, token: str = Q
                 message = await websocket.receive_json()
                 response = await _dispatch(voice_session, message)
                 if response is not None:
-                    await websocket.send_json(response)
+                    async with send_lock:
+                        await websocket.send_json(response)
         except WebSocketDisconnect:
             pass
         finally:

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { startMicrophoneCapture, type MicCapture } from '../services/audioCapture';
+import { playChunk, stopAllAudio } from '../services/audioPlayback';
 import { useSessionStore } from '../store/sessionStore';
 import {
   initialVoiceUIState,
@@ -45,6 +46,11 @@ export function useVoiceSession(wsUrl: string): UseVoiceSessionResult {
     ws.onmessage = (event: MessageEvent<string>) => {
       const message: ServerMessage = JSON.parse(event.data);
 
+      if (message.type === 'audio_out') {
+        playChunk(message.data);
+        return;
+      }
+
       if (message.type === 'confirmation_request') {
         pendingConfirmationRef.current = message;
       }
@@ -88,6 +94,11 @@ export function useVoiceSession(wsUrl: string): UseVoiceSessionResult {
   }, []);
 
   const startPTT = useCallback(() => {
+    // Barge-in (CLAUDE.md/T-006 "interrumpir TTS"): pressing the button
+    // again always interrupts whatever confirmation readback might still
+    // be playing, both locally and on the backend's session state.
+    stopAllAudio();
+    send({ type: 'barge_in' });
     send({ type: 'ptt_start' });
     startMicrophoneCapture((base64Pcm16) => send({ type: 'audio_chunk', data: base64Pcm16 })).then((mic) => {
       micRef.current = mic;

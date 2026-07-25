@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 
@@ -8,11 +9,13 @@ from app.agents.voice.stt_provider import STTProvider
 
 
 class FakeSTTProvider(STTProvider):
-    def __init__(self, events: list[TranscriptEvent]):
+    def __init__(self, events: list[TranscriptEvent], audio_chunks: list[str] | None = None):
         self._events = events
+        self._audio_chunks = audio_chunks or []
         self.connected = False
         self.sent_chunks: list[bytes] = []
         self.disconnected = False
+        self.spoken_texts: list[str] = []
 
     async def connect(self, session_config: SessionConfig) -> None:
         self.connected = True
@@ -20,9 +23,16 @@ class FakeSTTProvider(STTProvider):
     async def send_audio(self, chunk: bytes) -> None:
         self.sent_chunks.append(chunk)
 
+    async def speak(self, text: str) -> None:
+        self.spoken_texts.append(text)
+
     async def receive(self) -> AsyncIterator[TranscriptEvent]:
         for event in self._events:
             yield event
+
+    async def receive_audio(self) -> AsyncIterator[str]:
+        for chunk in self._audio_chunks:
+            yield chunk
 
     async def disconnect(self) -> None:
         self.disconnected = True
@@ -378,3 +388,91 @@ async def test_item_saved_includes_expiry_date_for_perishables(monkeypatch):
     assert response["type"] == "item_saved"
     assert response["expiry_date"] == "2026-08-15"
     assert session.state == VoiceState.IDLE
+
+
+async def test_audio_relay_forwards_chunks_to_the_injected_callback():
+    stt = FakeSTTProvider(events=[], audio_chunks=["chunk-1", "chunk-2"])
+    received: list[str] = []
+
+    async def on_audio_chunk(chunk_b64: str) -> None:
+        received.append(chunk_b64)
+
+    session = VoicePTTSession(
+        stt_provider=stt, session_config=_session_config(), on_audio_chunk=on_audio_chunk
+    )
+    await session.handle_ptt_start()
+
+    assert session._audio_relay_task is not None
+    await session._audio_relay_task
+
+    assert received == ["chunk-1", "chunk-2"]
+
+
+async def test_close_cancels_the_audio_relay_task():
+    stt = FakeSTTProvider(events=[], audio_chunks=[])
+    session = VoicePTTSession(stt_provider=stt, session_config=_session_config())
+    await session.handle_ptt_start()
+
+    relay_task = session._audio_relay_task
+    assert relay_task is not None
+
+    await session.close()
+
+    # Either already finished (empty audio_chunks) or cancelled by close() —
+    # either way it must not still be running after close().
+    await asyncio.sleep(0)
+    assert relay_task.done()
+
+
+async def test_quantity_confirmation_speaks_the_display_text(monkeypatch):
+    events = [TranscriptEvent(type=TranscriptEventType.FINAL, text="veinte kilos de sal", confidence=0.9)]
+    stt = FakeSTTProvider(events=events)
+    session = VoicePTTSession(stt_provider=stt, session_config=_session_config())
+    await session.handle_ptt_start()
+
+    async def fake_extract(transcript: str):
+        return extractor._LLMExtraction(article="sal", quantity=20.0, unit="kilos")
+
+    monkeypatch.setattr(extractor, "extract", fake_extract)
+    response = await session.handle_ptt_stop()
+
+    assert stt.spoken_texts == [response["display_text"]]
+
+
+async def test_expiry_date_request_speaks_the_question(monkeypatch):
+    events = [TranscriptEvent(type=TranscriptEventType.FINAL, text="dos litros de leche", confidence=0.9)]
+    stt = FakeSTTProvider(events=events)
+    session = VoicePTTSession(
+        stt_provider=stt, session_config=_session_config(), homologate=_homologate_perishable
+    )
+    await session.handle_ptt_start()
+
+    async def fake_extract(transcript: str):
+        return extractor._LLMExtraction(article="leche", quantity=2.0, unit="litros")
+
+    monkeypatch.setattr(extractor, "extract", fake_extract)
+    response = await session.handle_ptt_stop()
+
+    assert stt.spoken_texts == [response["message"]]
+
+
+async def test_expiry_date_confirmation_speaks_the_display_text(monkeypatch):
+    events = [TranscriptEvent(type=TranscriptEventType.FINAL, text="dos litros de leche", confidence=0.9)]
+    stt = FakeSTTProvider(events=events)
+    session = VoicePTTSession(
+        stt_provider=stt, session_config=_session_config(), homologate=_homologate_perishable
+    )
+    await session.handle_ptt_start()
+
+    async def fake_extract(transcript: str):
+        return extractor._LLMExtraction(article="leche", quantity=2.0, unit="litros")
+
+    monkeypatch.setattr(extractor, "extract", fake_extract)
+    await session.handle_ptt_stop()  # speaks the expiry_date_request question
+
+    stt._events = [
+        TranscriptEvent(type=TranscriptEventType.FINAL, text="quince de agosto de 2026", confidence=0.9)
+    ]
+    response = await session.handle_ptt_stop()
+
+    assert stt.spoken_texts[-1] == response["display_text"]

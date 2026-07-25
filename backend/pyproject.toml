@@ -17,8 +17,12 @@ dependencies = [
     "asyncpg>=0.29.0",
     "alembic>=1.13.0",
 
-    # Vector DB
-    "qdrant-client>=1.9.0",
+    # Vector DB — pinned to the 1.9.x line to match docker-compose.yml's
+    # qdrant/qdrant:v1.9.0 server image. An unbounded >=1.9.0 resolved to
+    # 1.18.0 in practice, which qdrant-client itself warns is incompatible
+    # ("Major versions should match and minor version difference must not
+    # exceed 1") — harmless today but a real risk on any future API drift.
+    "qdrant-client>=1.9.0,<1.10.0",
 
     # Embeddings (local, no API cost)
     "sentence-transformers>=3.0.0",
@@ -56,6 +60,14 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# app/database.py's engine (and its asyncpg connection pool) is a
+# module-level singleton created once at import time, bound to whichever
+# event loop first touches it. pytest-asyncio's default is a fresh loop per
+# test function, which breaks any test after the first one that hits the
+# real DB ("Future attached to a different loop") — session-scoping the
+# loop keeps every test on the one loop the engine was created on.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 
 [tool.setuptools.packages.find]

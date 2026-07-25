@@ -41,6 +41,14 @@ _TENS = {
     30: "treinta", 40: "cuarenta", 50: "cincuenta", 60: "sesenta",
     70: "setenta", 80: "ochenta", 90: "noventa",
 }
+# "veinti-" compounds carry accents ("veintidós", "veintitrés",
+# "veintiséis") that the standalone ones-words don't ("dos", "tres",
+# "seis") — naively concatenating "veinti" + _ONES[n] silently drops them.
+_TWENTIES = {
+    21: "veintiuno", 22: "veintidós", 23: "veintitrés", 24: "veinticuatro",
+    25: "veinticinco", 26: "veintiséis", 27: "veintisiete", 28: "veintiocho",
+    29: "veintinueve",
+}
 
 
 def _cardinal_to_words(n: int) -> str:
@@ -49,7 +57,7 @@ def _cardinal_to_words(n: int) -> str:
     if n <= 20:
         return _ONES[n]
     if n < 30:
-        return f"veinti{_ONES[n - 20]}"
+        return _TWENTIES[n]
     tens = (n // 10) * 10
     remainder = n % 10
     if remainder == 0:

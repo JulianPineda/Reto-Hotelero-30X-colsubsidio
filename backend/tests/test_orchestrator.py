@@ -25,16 +25,17 @@ class _FakeResult:
 
 
 class _FakeSession:
-    """Only handles exactly the two `execute()` calls persist_count_item
-    itself issues (CatalogItem lookup, then the sequence-number max) —
+    """`responses` is popped in call order — persist_count_item issues at
+    most two `execute()` calls (CatalogItem lookup, then the sequence-number
+    max), and the CatalogItem lookup only happens when `oracle_code` is
+    given, so the caller must supply exactly the responses that scenario
+    will actually trigger (see the `_responses_*` helpers below).
     `run_audit` is monkeypatched in every test below so its own internal
     queries never run against this fake."""
 
-    def __init__(self, count_session, catalog_item, max_sequence):
+    def __init__(self, count_session, responses):
         self._count_session = count_session
-        self._catalog_item = catalog_item
-        self._max_sequence = max_sequence
-        self._execute_count = 0
+        self._responses = list(responses)
         self.added: list = []
         self.committed = False
 
@@ -42,10 +43,7 @@ class _FakeSession:
         return self._count_session
 
     async def execute(self, *_args, **_kwargs):
-        self._execute_count += 1
-        if self._execute_count == 1:
-            return _FakeResult(self._catalog_item)
-        return _FakeResult(self._max_sequence)
+        return self._responses.pop(0)
 
     def add(self, obj) -> None:
         self.added.append(obj)
@@ -57,6 +55,18 @@ class _FakeSession:
 
     async def commit(self) -> None:
         self.committed = True
+
+
+def _responses_with_catalog_lookup(catalog_item, max_sequence: int) -> list[_FakeResult]:
+    """oracle_code given -> CatalogItem lookup happens, then (if it found a
+    row and didn't raise) the sequence-number max."""
+    return [_FakeResult(catalog_item), _FakeResult(max_sequence)]
+
+
+def _responses_without_catalog_lookup(max_sequence: int) -> list[_FakeResult]:
+    """oracle_code is None -> CatalogItem lookup is skipped entirely; the
+    sequence-number max is the only execute() call."""
+    return [_FakeResult(max_sequence)]
 
 
 def _count_session(**overrides) -> SimpleNamespace:
@@ -95,7 +105,7 @@ def _no_flag_audit_result(**overrides) -> AuditResult:
 async def test_persists_item_and_emits_item_created(monkeypatch):
     count_session = _count_session()
     catalog_item = _catalog_item()
-    session = _FakeSession(count_session, catalog_item, max_sequence=0)
+    session = _FakeSession(count_session, _responses_with_catalog_lookup(catalog_item, max_sequence=0))
 
     async def fake_run_audit(_session, _request):
         return _no_flag_audit_result()
@@ -136,7 +146,7 @@ async def test_persists_item_and_emits_item_created(monkeypatch):
 async def test_flagged_item_updates_session_counter(monkeypatch):
     count_session = _count_session(total_items=5, flagged_items=1)
     catalog_item = _catalog_item()
-    session = _FakeSession(count_session, catalog_item, max_sequence=5)
+    session = _FakeSession(count_session, _responses_with_catalog_lookup(catalog_item, max_sequence=5))
 
     async def fake_run_audit(_session, _request):
         return _no_flag_audit_result(is_flagged=True, flag_type="threshold", explanation="Caída del 84.4%.")
@@ -168,7 +178,7 @@ async def test_flagged_item_updates_session_counter(monkeypatch):
 
 async def test_sin_homologar_item_skips_the_auditor(monkeypatch):
     count_session = _count_session()
-    session = _FakeSession(count_session, catalog_item=None, max_sequence=0)
+    session = _FakeSession(count_session, _responses_without_catalog_lookup(max_sequence=0))
 
     audit_spy = SimpleNamespace(called=False)
 
@@ -202,7 +212,7 @@ async def test_sin_homologar_item_skips_the_auditor(monkeypatch):
 async def test_perishable_item_computes_traffic_light(monkeypatch):
     count_session = _count_session()
     catalog_item = _catalog_item(oracle_code="LAC-001", name="Leche Entera 1L", is_perishable=True)
-    session = _FakeSession(count_session, catalog_item, max_sequence=0)
+    session = _FakeSession(count_session, _responses_with_catalog_lookup(catalog_item, max_sequence=0))
 
     async def fake_run_audit(_session, _request):
         return _no_flag_audit_result()
@@ -231,7 +241,9 @@ async def test_perishable_item_computes_traffic_light(monkeypatch):
 async def test_perishable_item_missing_expiry_date_raises(monkeypatch):
     count_session = _count_session()
     catalog_item = _catalog_item(oracle_code="LAC-001", name="Leche Entera 1L", is_perishable=True)
-    session = _FakeSession(count_session, catalog_item, max_sequence=0)
+    # Raises right after the CatalogItem lookup, before the sequence-max
+    # query ever runs — only one response needed.
+    session = _FakeSession(count_session, [_FakeResult(catalog_item)])
 
     async def fake_run_audit(_session, _request):
         return _no_flag_audit_result()
@@ -258,7 +270,9 @@ async def test_perishable_item_missing_expiry_date_raises(monkeypatch):
 
 async def test_unknown_oracle_code_raises():
     count_session = _count_session()
-    session = _FakeSession(count_session, catalog_item=None, max_sequence=0)
+    # CatalogItem lookup returns nothing -> raises immediately, no further
+    # execute() calls.
+    session = _FakeSession(count_session, [_FakeResult(None)])
 
     with pytest.raises(UnknownOracleCodeError):
         await persist_count_item(
@@ -279,7 +293,8 @@ async def test_unknown_oracle_code_raises():
 
 
 async def test_missing_session_raises():
-    session = _FakeSession(count_session=None, catalog_item=None, max_sequence=0)
+    # session.get() returns None -> raises before any execute() call.
+    session = _FakeSession(count_session=None, responses=[])
 
     with pytest.raises(SessionNotFoundError):
         await persist_count_item(

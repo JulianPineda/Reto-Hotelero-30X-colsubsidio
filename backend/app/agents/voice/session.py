@@ -25,6 +25,7 @@ State machine (EPIC-2-voice.md T-006, extended by T-017 for perishables):
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date
@@ -64,6 +65,13 @@ class PendingItem:
 
 HomologateFn = Callable[[str], Awaitable[dict]]
 PersistItemFn = Callable[["PendingItem"], Awaitable[dict]]
+AudioChunkFn = Callable[[str], Awaitable[None]]
+
+
+async def _default_on_audio_chunk(chunk_b64: str) -> None:
+    """Stand-in for tests/dev — real wiring is `voice/router.py` forwarding
+    each chunk to the browser as an `audio_out` WS message."""
+    return None
 
 
 async def _default_homologate(article: str) -> dict:
@@ -94,22 +102,35 @@ class VoicePTTSession:
         session_config: SessionConfig,
         homologate: HomologateFn = _default_homologate,
         persist_item: PersistItemFn = _default_persist_item,
+        on_audio_chunk: AudioChunkFn = _default_on_audio_chunk,
     ) -> None:
         self.stt_provider = stt_provider
         self.session_config = session_config
         self.homologate = homologate
         self.persist_item = persist_item
+        self.on_audio_chunk = on_audio_chunk
         self.state = VoiceState.IDLE
         self.low_confidence_attempts = 0
         self.pending_item: PendingItem | None = None
         self._connected = False
+        self._audio_relay_task: asyncio.Task[None] | None = None
 
     async def handle_ptt_start(self) -> dict:
         if not self._connected:
             await self.stt_provider.connect(self.session_config)
             self._connected = True
+            self._audio_relay_task = asyncio.create_task(self._relay_audio_out())
         self.state = VoiceState.LISTENING
         return {"type": "listening"}
+
+    async def _relay_audio_out(self) -> None:
+        """Forwards TTS audio chunks (see `speak()` calls below) to
+        whoever's listening — `voice/router.py` wires this to the browser's
+        WS connection. Runs for the connection's lifetime, independent of
+        the ptt_start/ptt_stop cycle, since TTS playback can still be
+        streaming in after a `speak()` call returns."""
+        async for chunk_b64 in self.stt_provider.receive_audio():
+            await self.on_audio_chunk(chunk_b64)
 
     async def handle_audio_chunk(self, data: bytes) -> None:
         if self.state != VoiceState.LISTENING:
@@ -158,7 +179,7 @@ class VoicePTTSession:
         self.low_confidence_attempts = 0
 
         if previous_state == VoiceState.AWAITING_EXPIRY_DATE:
-            return self._handle_expiry_transcript(final_text)
+            return await self._handle_expiry_transcript(final_text)
 
         return await self._parse_and_confirm(final_text)
 
@@ -200,18 +221,21 @@ class VoicePTTSession:
 
         if homologation.get("is_perishable"):
             self.state = VoiceState.AWAITING_EXPIRY_DATE
+            message = f"¿Cuál es la fecha de vencimiento de {article_name}?"
+            await self.stt_provider.speak(message)
             return {
                 "type": "expiry_date_request",
                 "item_id": str(item_id),
                 "article": article_name,
-                "message": f"¿Cuál es la fecha de vencimiento de {article_name}?",
+                "message": message,
             }
 
         self.state = VoiceState.CONFIRMING
-        return self._build_quantity_confirmation(self.pending_item)
+        return await self._build_quantity_confirmation(self.pending_item)
 
-    def _build_quantity_confirmation(self, item: PendingItem) -> dict:
+    async def _build_quantity_confirmation(self, item: PendingItem) -> dict:
         digit_by_digit, display_text = build_digit_confirmation(item.quantity, item.unit, item.article)
+        await self.stt_provider.speak(display_text)
         return {
             "type": "confirmation_request",
             "item_id": str(item.item_id),
@@ -224,7 +248,7 @@ class VoicePTTSession:
             "display_text": display_text,
         }
 
-    def _handle_expiry_transcript(self, transcript: str) -> dict:
+    async def _handle_expiry_transcript(self, transcript: str) -> dict:
         assert self.pending_item is not None  # guaranteed by the AWAITING_EXPIRY_DATE transition
 
         parsed = parse_spoken_date(transcript)
@@ -239,16 +263,18 @@ class VoicePTTSession:
         self.pending_item.expiry_date = parsed
         self.state = VoiceState.CONFIRMING_EXPIRY_DATE
         spoken = build_spoken_date_confirmation(parsed)
+        display_text = f"¿Confirmas fecha de vencimiento: {spoken}?"
+        await self.stt_provider.speak(display_text)
         return {
             "type": "expiry_date_confirmation_request",
             "item_id": str(self.pending_item.item_id),
             "expiry_date": parsed.isoformat(),
-            "display_text": f"¿Confirmas fecha de vencimiento: {spoken}?",
+            "display_text": display_text,
         }
 
     async def handle_confirm(self, value: bool) -> dict:
         if self.state == VoiceState.CONFIRMING_EXPIRY_DATE:
-            return self._handle_expiry_confirm(value)
+            return await self._handle_expiry_confirm(value)
 
         if self.state != VoiceState.CONFIRMING or self.pending_item is None:
             return {
@@ -284,7 +310,7 @@ class VoicePTTSession:
         self.state = VoiceState.LISTENING
         return {"type": "listening"}
 
-    def _handle_expiry_confirm(self, value: bool) -> dict:
+    async def _handle_expiry_confirm(self, value: bool) -> dict:
         if self.pending_item is None:
             return {
                 "type": "error",
@@ -294,15 +320,17 @@ class VoicePTTSession:
 
         if value:
             self.state = VoiceState.CONFIRMING
-            return self._build_quantity_confirmation(self.pending_item)
+            return await self._build_quantity_confirmation(self.pending_item)
 
         self.pending_item.expiry_date = None
         self.state = VoiceState.AWAITING_EXPIRY_DATE
+        message = f"¿Cuál es la fecha de vencimiento de {self.pending_item.article}?"
+        await self.stt_provider.speak(message)
         return {
             "type": "expiry_date_request",
             "item_id": str(self.pending_item.item_id),
             "article": self.pending_item.article,
-            "message": f"¿Cuál es la fecha de vencimiento de {self.pending_item.article}?",
+            "message": message,
         }
 
     async def handle_barge_in(self) -> dict:
@@ -311,5 +339,8 @@ class VoicePTTSession:
 
     async def close(self) -> None:
         if self._connected:
+            if self._audio_relay_task is not None:
+                self._audio_relay_task.cancel()
+                self._audio_relay_task = None
             await self.stt_provider.disconnect()
             self._connected = False

@@ -31,7 +31,11 @@ export type ServerMessage =
     }
   | { type: 'low_confidence'; confidence: number | null; attempt: number; max_attempts: number }
   | { type: 'manual_fallback_offered' }
-  | { type: 'error'; code: string; message: string };
+  | { type: 'error'; code: string; message: string }
+  // TTS confirmation readback (session.py's speak() calls) — a side
+  // channel played via services/audioPlayback.ts in useVoiceSession, not
+  // something that changes VoiceUIState's phase.
+  | { type: 'audio_out'; data: string };
 
 /** Client-originated pseudo-event — `ptt_stop` moves the UI to "processing"
  * immediately, without waiting for the server round-trip. */
@@ -87,6 +91,8 @@ export function reduceVoiceEvent(state: VoiceUIState, event: VoiceEvent): VoiceU
       return { phase: 'manual_fallback' };
     case 'error':
       return { phase: 'error', code: event.code, message: event.message };
+    case 'audio_out':
+      return state;
     default:
       return state;
   }
