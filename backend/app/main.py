@@ -11,10 +11,9 @@ from app.database import init_db_pool, close_db_pool
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db_pool()
-    # Embedding model loaded here (once at startup, not per request) —
-    # uncomment once T-009 (EPIC-3) adds app/agents/catalog/embedder.py:
-    # from app.agents.catalog.embedder import load_model
-    # load_model()
+    # Embedding model loaded here (once at startup, not per request).
+    from app.agents.catalog.embedder import load_model
+    load_model()
     yield
     await close_db_pool()
 
@@ -66,9 +65,13 @@ app.include_router(voice_router)
 from app.agents.parser.router import router as parser_router
 app.include_router(parser_router, prefix="/api/v1")
 
+from app.agents.catalog.router import router as catalog_router
+app.include_router(catalog_router, prefix="/api/v1")
+
+from app.agents.auditor.router import router as auditor_router
+app.include_router(auditor_router, prefix="/api/v1")
+
 # Uncomment as each Epic is implemented:
-# from app.agents.catalog.router import router as catalog_router
-# from app.agents.auditor.router import router as auditor_router
 # from app.agents.exporter.router import router as exporter_router
 # from app.api.supervisor import router as supervisor_router
 # from app.api.warehouses import router as warehouses_router
