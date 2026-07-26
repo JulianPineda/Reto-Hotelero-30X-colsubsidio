@@ -83,6 +83,7 @@ async def get_flagged_items(
                 CountItem.session_id == session_id,
                 CountItem.is_flagged.is_(True),
                 CountItem.is_approved.is_(None),
+                CountItem.is_deleted.is_(False),
             )
         )
     ).all()
@@ -270,5 +271,6 @@ async def can_export(session_id: UUID, db: AsyncSession) -> bool:
         .where(CountItem.session_id == session_id)
         .where(CountItem.is_flagged.is_(True))
         .where(CountItem.is_approved.is_(None))
+        .where(CountItem.is_deleted.is_(False))
     )
     return pending.scalar() == 0

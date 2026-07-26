@@ -26,6 +26,7 @@ State machine (EPIC-2-voice.md T-006, extended by T-017 for perishables):
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date
@@ -41,6 +42,8 @@ from app.agents.voice.stt_provider import STTProvider
 from app.config import settings
 
 MAX_LOW_CONFIDENCE_ATTEMPTS = 3
+
+logger = logging.getLogger(__name__)
 
 
 class VoiceState(StrEnum):
@@ -61,6 +64,7 @@ class PendingItem:
     oracle_code: str | None = None
     is_perishable: bool | None = None
     expiry_date: date | None = None
+    sin_homologar: bool = False
 
 
 HomologateFn = Callable[[str], Awaitable[dict]]
@@ -114,15 +118,34 @@ class VoicePTTSession:
         self.pending_item: PendingItem | None = None
         self._connected = False
         self._audio_relay_task: asyncio.Task[None] | None = None
+        self._speak_tasks: set[asyncio.Task[None]] = set()
 
     async def handle_ptt_start(self) -> dict:
-        if not self._connected:
-            await self.stt_provider.connect(self.session_config)
-            self._connected = True
-            self._audio_relay_task = asyncio.create_task(self._relay_audio_out())
+        await self._reconnect_provider()
         await self.stt_provider.start_of_speech()
         self.state = VoiceState.LISTENING
         return {"type": "listening"}
+
+    async def _reconnect_provider(self) -> None:
+        """A fresh Gemini Live connection for EVERY utterance, not one
+        reused across the whole PTT session — confirmed live (and
+        reproduced in isolation): a second `start_of_speech()` on an
+        already-used connection hangs forever waiting for a transcript that
+        never arrives, while the exact same audio on a brand-new connection
+        works immediately. This is a real limitation of Gemini Live's manual
+        activity-detection mode in this preview model, not something fixable
+        from our side — reconnecting per utterance trades a bit of latency
+        (a few hundred ms) for actually working reliably past the first
+        item in a session."""
+        if self._connected:
+            if self._audio_relay_task is not None:
+                self._audio_relay_task.cancel()
+                self._audio_relay_task = None
+            await self.stt_provider.disconnect()
+            self._connected = False
+        await self.stt_provider.connect(self.session_config)
+        self._connected = True
+        self._audio_relay_task = asyncio.create_task(self._relay_audio_out())
 
     async def _relay_audio_out(self) -> None:
         """Forwards TTS audio chunks (see `speak()` calls below) to
@@ -133,10 +156,36 @@ class VoicePTTSession:
         async for chunk_b64 in self.stt_provider.receive_audio():
             await self.on_audio_chunk(chunk_b64)
 
-    async def handle_audio_chunk(self, data: bytes) -> None:
+    def _speak_in_background(self, text: str) -> None:
+        """Fires `speak()` without blocking the caller. Confirmed live: the
+        confirmation dialog took 10-15s to appear on screen because every
+        call site below used to `await self.stt_provider.speak(...)` BEFORE
+        returning its `confirmation_request`/`expiry_date_request`/etc.
+        response — so the operator's screen sat frozen for however long TTS
+        synthesis took (worse with `speak()`'s own retry-on-silent-turn
+        logic, up to 3 attempts x 8s). The confirmation dialog only needs
+        the parsed/homologated data, which is already known by the time
+        `speak()` would be called; the spoken readback is a nice-to-have
+        that can stream in over `receive_audio()`/`_relay_audio_out`
+        afterward, not a gate on showing the UI. A bare `create_task` isn't
+        enough on its own — asyncio only holds a weak reference to it, so
+        without keeping it in `_speak_tasks` it could be garbage-collected
+        mid-flight; the done-callback both discards it and logs a failure
+        instead of the exception vanishing silently."""
+
+        def _log_if_failed(task: asyncio.Task[None]) -> None:
+            self._speak_tasks.discard(task)
+            if not task.cancelled() and task.exception() is not None:
+                logger.exception("speak() failed in background", exc_info=task.exception())
+
+        task = asyncio.create_task(self.stt_provider.speak(text))
+        self._speak_tasks.add(task)
+        task.add_done_callback(_log_if_failed)
+
+    async def handle_audio_chunk(self, data: bytes, sample_rate: int) -> None:
         if self.state != VoiceState.LISTENING:
             return
-        await self.stt_provider.send_audio(data)
+        await self.stt_provider.send_audio(data, sample_rate)
 
     async def handle_ptt_stop(self) -> dict:
         previous_state = self.state
@@ -219,12 +268,13 @@ class VoicePTTSession:
             unit=unit,
             oracle_code=homologation.get("oracle_code"),
             is_perishable=homologation.get("is_perishable"),
+            sin_homologar=bool(homologation.get("sin_homologar")),
         )
 
         if homologation.get("is_perishable"):
             self.state = VoiceState.AWAITING_EXPIRY_DATE
             message = f"¿Cuál es la fecha de vencimiento de {article_name}?"
-            await self.stt_provider.speak(message)
+            self._speak_in_background(message)
             return {
                 "type": "expiry_date_request",
                 "item_id": str(item_id),
@@ -237,7 +287,7 @@ class VoicePTTSession:
 
     async def _build_quantity_confirmation(self, item: PendingItem) -> dict:
         digit_by_digit, display_text = build_digit_confirmation(item.quantity, item.unit, item.article)
-        await self.stt_provider.speak(display_text)
+        self._speak_in_background(display_text)
         return {
             "type": "confirmation_request",
             "item_id": str(item.item_id),
@@ -248,6 +298,12 @@ class VoicePTTSession:
             "expiry_date": item.expiry_date.isoformat() if item.expiry_date else None,
             "digit_by_digit": digit_by_digit,
             "display_text": display_text,
+            # CLAUDE.md §3.2's "sin_homologar" case was previously silent
+            # until after saving (a trailing "(sin homologar)" label in the
+            # already-saved items list) — the operator now sees it at
+            # confirmation time, since dictating something not in the
+            # catalog is worth flagging before it's committed, not after.
+            "sin_homologar": item.sin_homologar,
         }
 
     async def _handle_expiry_transcript(self, transcript: str) -> dict:
@@ -266,7 +322,7 @@ class VoicePTTSession:
         self.state = VoiceState.CONFIRMING_EXPIRY_DATE
         spoken = build_spoken_date_confirmation(parsed)
         display_text = f"¿Confirmas fecha de vencimiento: {spoken}?"
-        await self.stt_provider.speak(display_text)
+        self._speak_in_background(display_text)
         return {
             "type": "expiry_date_confirmation_request",
             "item_id": str(self.pending_item.item_id),
@@ -327,7 +383,7 @@ class VoicePTTSession:
         self.pending_item.expiry_date = None
         self.state = VoiceState.AWAITING_EXPIRY_DATE
         message = f"¿Cuál es la fecha de vencimiento de {self.pending_item.article}?"
-        await self.stt_provider.speak(message)
+        self._speak_in_background(message)
         return {
             "type": "expiry_date_request",
             "item_id": str(self.pending_item.item_id),
@@ -338,6 +394,28 @@ class VoicePTTSession:
     async def handle_barge_in(self) -> dict:
         self.state = VoiceState.LISTENING
         return {"type": "listening"}
+
+    async def recover_from_provider_failure(self) -> None:
+        """Gemini's Live API preview is demonstrably not 100% reliable (see
+        gemini_live.py's docstring — confirmed both audio-less turns and,
+        live, a `1007 Precondition check failed` connection drop on
+        `start_of_speech()`). Without this, any such hiccup propagated as an
+        uncaught exception clear out of the WS dispatch loop (router.py),
+        killing the operator's entire browser connection with no way to
+        recover short of reloading the page. This tears down the dead
+        provider and resets state so the *next* ptt_start reconnects fresh
+        instead of reusing a connection that's already gone."""
+        if self._audio_relay_task is not None:
+            self._audio_relay_task.cancel()
+            self._audio_relay_task = None
+        try:
+            await self.stt_provider.disconnect()
+        except Exception:  # noqa: BLE001 - best-effort teardown of an already-broken provider
+            pass
+        self._connected = False
+        self.state = VoiceState.IDLE
+        self.pending_item = None
+        self.low_confidence_attempts = 0
 
     async def close(self) -> None:
         if self._connected:

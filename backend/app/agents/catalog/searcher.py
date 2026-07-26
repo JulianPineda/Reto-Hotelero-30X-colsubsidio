@@ -17,6 +17,19 @@ AUTO_ACCEPT_THRESHOLD = 0.80
 ALTERNATIVES_THRESHOLD = 0.50
 SEARCH_LIMIT = 5
 
+# Confirmed live: this embedding model's absolute scores aren't always a
+# reliable confidence signal on their own for short, technical Spanish
+# grocery terms — "aceite vegetal" scored 0.8726 against 'ACEITE DE
+# AJONJOLI' and 0.8644 against the correct-ish generic 'ACEITE', a ~0.008
+# gap that's within the model's noise floor, yet both clear
+# AUTO_ACCEPT_THRESHOLD so the old code silently picked the sesame oil.
+# When the top-2 candidates are this close, the model isn't actually
+# confident which one is right — CLAUDE.md §3.2's "score >= 0.80 ->
+# auto-accept" implicitly assumes the top score reflects real confidence,
+# which breaks down when it has a near-tied runner-up. Falling through to
+# the alternatives band in that case asks the operator instead of guessing.
+AMBIGUOUS_MARGIN = 0.03
+
 
 async def vector_search(client: AsyncQdrantClient, article: str) -> list[dict]:
     query_vector = embedder.embed(article)
@@ -58,8 +71,12 @@ def classify(matches: list[dict], match_method: str = "vector_search") -> Homolo
         )
 
     top = matches[0]
+    runner_up = matches[1] if len(matches) > 1 else None
+    top_is_ambiguous = (
+        runner_up is not None and (top["score"] - runner_up["score"]) < AMBIGUOUS_MARGIN
+    )
 
-    if top["score"] >= AUTO_ACCEPT_THRESHOLD:
+    if top["score"] >= AUTO_ACCEPT_THRESHOLD and not top_is_ambiguous:
         return HomologateResult(
             oracle_code=top["oracle_code"],
             name=top["name"],

@@ -13,6 +13,10 @@ export type ConfirmationRequestMessage = {
   expiry_date: string | null;
   digit_by_digit: string | null;
   display_text: string;
+  /** CLAUDE.md §3.2's score <0.50 case — the article didn't match anything
+   * in the catalog closely enough. Surfaced here (not just as a trailing
+   * label after saving) so the operator sees it before confirming. */
+  sin_homologar: boolean;
 };
 
 export type ServerMessage =

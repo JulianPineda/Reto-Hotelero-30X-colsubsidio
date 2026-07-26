@@ -17,6 +17,15 @@ def test_normalize_unit_maps_colloquial_spanish():
     assert normalize_unit("unidades") == "unit"
 
 
+def test_normalize_unit_maps_libras():
+    """Confirmed live: dictating "dos libras de mandarina" silently lost
+    the unit — normalize_unit had no entry for libra/libras/lb/lbs at all."""
+    assert normalize_unit("libra") == "lb"
+    assert normalize_unit("libras") == "lb"
+    assert normalize_unit("lb") == "lb"
+    assert normalize_unit("lbs") == "lb"
+
+
 def test_normalize_unit_passes_through_canonical():
     assert normalize_unit("kg") == "kg"
     assert normalize_unit("GAL") == "GAL"

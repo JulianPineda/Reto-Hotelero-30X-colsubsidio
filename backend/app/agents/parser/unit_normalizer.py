@@ -1,9 +1,9 @@
 """Maps a colloquial Spanish unit word (as extracted by the LLM) onto the
-system's canonical UOM vocabulary: kg, g, L, mL, unit, dozen, case, GAL, oz.
+system's canonical UOM vocabulary: kg, g, L, mL, unit, dozen, case, GAL, oz, lb.
 """
 import unicodedata
 
-_CANONICAL_UNITS = ["kg", "g", "L", "mL", "unit", "dozen", "case", "GAL", "oz"]
+_CANONICAL_UNITS = ["kg", "g", "L", "mL", "unit", "dozen", "case", "GAL", "oz", "lb"]
 _CANONICAL_BY_LOWER = {u.lower(): u for u in _CANONICAL_UNITS}
 
 _ALIASES: dict[str, str] = {
@@ -16,6 +16,8 @@ _ALIASES: dict[str, str] = {
     "caja": "case", "cajas": "case",
     "galon": "GAL", "galones": "GAL",
     "onza": "oz", "onzas": "oz",
+    # Confirmed live: operators dictating in pounds ("dos libras de mandarina")
+    "libra": "lb", "libras": "lb", "lb": "lb", "lbs": "lb",
 }
 
 

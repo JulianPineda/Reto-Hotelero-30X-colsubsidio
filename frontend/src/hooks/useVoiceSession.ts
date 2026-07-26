@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { startMicrophoneCapture, type MicCapture } from '../services/audioCapture';
 import { playChunk, stopAllAudio } from '../services/audioPlayback';
 import { useSessionStore } from '../store/sessionStore';
@@ -12,6 +12,13 @@ import {
 
 export interface UseVoiceSessionResult {
   uiState: VoiceUIState;
+  /** False until the WS handshake completes. Confirmed live: pressing the
+   * VoiceButton before this was true silently dropped `ptt_start` (and
+   * every audio chunk after it) — `send()` no-ops on a non-OPEN socket —
+   * while the mic still "listened" locally with no error shown, and the
+   * eventual `ptt_stop` crashed server-side with nothing to stop. Callers
+   * should keep the button disabled until this is true. */
+  wsReady: boolean;
   startPTT: () => void;
   stopPTT: () => void;
   confirm: (value: boolean) => void;
@@ -35,6 +42,7 @@ export interface UseVoiceSessionResult {
  */
 export function useVoiceSession(wsUrl: string): UseVoiceSessionResult {
   const [uiState, dispatch] = useReducer(reduceVoiceEvent, initialVoiceUIState);
+  const [wsReady, setWsReady] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const micRef = useRef<MicCapture | null>(null);
   const pendingConfirmationRef = useRef<ConfirmationRequestMessage | null>(null);
@@ -43,6 +51,10 @@ export function useVoiceSession(wsUrl: string): UseVoiceSessionResult {
   useEffect(() => {
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
+    setWsReady(false);
+
+    ws.onopen = () => setWsReady(true);
+    ws.onclose = () => setWsReady(false);
 
     ws.onmessage = (event: MessageEvent<string>) => {
       const message: ServerMessage = JSON.parse(event.data);
@@ -85,6 +97,7 @@ export function useVoiceSession(wsUrl: string): UseVoiceSessionResult {
     return () => {
       ws.close();
       wsRef.current = null;
+      setWsReady(false);
     };
   }, [wsUrl, addItem]);
 
@@ -101,7 +114,9 @@ export function useVoiceSession(wsUrl: string): UseVoiceSessionResult {
     stopAllAudio();
     send({ type: 'barge_in' });
     send({ type: 'ptt_start' });
-    startMicrophoneCapture((base64Pcm16) => send({ type: 'audio_chunk', data: base64Pcm16 })).then((mic) => {
+    startMicrophoneCapture((base64Pcm16, sampleRate) =>
+      send({ type: 'audio_chunk', data: base64Pcm16, sample_rate: sampleRate }),
+    ).then((mic) => {
       micRef.current = mic;
     });
   }, [send]);
@@ -133,5 +148,5 @@ export function useVoiceSession(wsUrl: string): UseVoiceSessionResult {
     dispatch({ type: 'client_reset' });
   }, []);
 
-  return { uiState, startPTT, stopPTT, confirm, bargeIn, resetToIdle };
+  return { uiState, wsReady, startPTT, stopPTT, confirm, bargeIn, resetToIdle };
 }

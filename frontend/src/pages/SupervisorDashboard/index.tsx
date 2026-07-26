@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { colors } from '../../theme';
+import { colors, logos } from '../../theme';
+import { BackToMenuButton } from '../../components/BackToMenuButton';
 import type { FlagType } from '../../components/FlagBadge';
 import type { TrafficLightColor } from '../../components/TrafficLight';
 import { handleUnauthorized } from '../../services/apiClient';
@@ -55,6 +56,9 @@ export function SupervisorDashboard({
 }: SupervisorDashboardProps) {
   const [items, setItems] = useState<FlaggedItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportDone, setExportDone] = useState(false);
 
   const authHeaders = {
     'Content-Type': 'application/json',
@@ -107,33 +111,139 @@ export function SupervisorDashboard({
     await fetchItems();
   };
 
+  /** T-016 already had `POST /agents/export` + the job-status/download
+   * endpoints server-side, but the dashboard itself had no button for it —
+   * exporting only worked via raw curl. `format: 'excel'` per this
+   * screen's request; the CSV path (default) is unaffected. Downloads via
+   * a fetched blob rather than a plain `<a href>` because `GET /exports/
+   * {filename}` requires the same Bearer auth as everything else — a bare
+   * navigation/link click can't attach that header. */
+  const handleExport = async () => {
+    setExporting(true);
+    setExportError(null);
+    setExportDone(false);
+    try {
+      const requestResponse = await fetch(`${apiBaseUrl}/agents/export`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ session_id: sessionId, format: 'excel' }),
+      });
+      if (handleUnauthorized(requestResponse, '/supervisor-login')) return;
+      if (!requestResponse.ok) {
+        const body: { detail?: { error?: string; message?: string } } | null = await requestResponse
+          .json()
+          .catch(() => null);
+        if (body?.detail?.error === 'EXPORT_BLOCKED') {
+          setExportError('Hay ítems marcados sin resolver — apruébalos o recházalos antes de exportar.');
+        } else if (body?.detail?.error === 'ALREADY_EXPORTED') {
+          setExportError('Esta sesión ya fue exportada anteriormente.');
+        } else {
+          setExportError('No se pudo iniciar la exportación. Intenta de nuevo.');
+        }
+        return;
+      }
+      const { job_id: jobId }: { job_id: string } = await requestResponse.json();
+
+      let downloadUrl: string | null = null;
+      for (let attempt = 0; attempt < 20 && !downloadUrl; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const statusResponse = await fetch(`${apiBaseUrl}/agents/export/jobs/${jobId}`, { headers: authHeaders });
+        if (handleUnauthorized(statusResponse, '/supervisor-login')) return;
+        const status: { status: string; download_url: string | null; error: string | null } =
+          await statusResponse.json();
+        if (status.status === 'completed') {
+          downloadUrl = status.download_url;
+        } else if (status.status === 'failed') {
+          throw new Error(status.error ?? 'export_failed');
+        }
+      }
+      if (!downloadUrl) throw new Error('export_timeout');
+
+      const fileResponse = await fetch(`${apiBaseUrl}${downloadUrl}`, { headers: authHeaders });
+      if (!fileResponse.ok) throw new Error('download_failed');
+      const blob = await fileResponse.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = downloadUrl.split('/').pop() ?? 'export.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+      setExportDone(true);
+    } catch {
+      setExportError('No se pudo completar la exportación. Intenta de nuevo.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div style={{ padding: 24 }}>
-      <h1 style={{ color: colors.primary.blue }}>
-        Supervisor Dashboard — Bodega {warehouseCode} · Turno {shiftLabel}
-      </h1>
+      <div style={{ marginBottom: 16 }}>
+        <BackToMenuButton />
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <img src={logos.iconYellow} alt="" style={{ height: 32 }} />
+          <h1 style={{ color: colors.primary.blue }}>
+            Supervisor Dashboard — Bodega {warehouseCode} · Turno {shiftLabel}
+          </h1>
+        </div>
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          style={{
+            minHeight: 48,
+            padding: '0 20px',
+            background: exporting ? colors.neutral.grafito40 : colors.primary.blue,
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: 8,
+            fontWeight: 600,
+            cursor: exporting ? 'not-allowed' : 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {exporting ? 'Exportando…' : 'Exportar a Excel'}
+        </button>
+      </div>
+
+      {exportError && <p style={{ color: colors.ui.error }}>{exportError}</p>}
+      {exportDone && (
+        <p role="status" style={{ color: colors.ui.success, fontWeight: 600 }}>
+          Exportación completada — descarga iniciada.
+        </p>
+      )}
 
       <BulkActionBar pendingCount={items.length} onApproveAll={approveAll} />
 
       {loading ? (
         <p>Cargando…</p>
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: `2px solid ${colors.ui.border}` }}>
-              <th style={{ padding: 12 }}>Artículo</th>
-              <th style={{ padding: 12 }}>Cant</th>
-              <th style={{ padding: 12 }}>Flag</th>
-              <th style={{ padding: 12 }}>Motivo</th>
-              <th style={{ padding: 12 }}>Acción</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <FlaggedItemRow key={item.itemId} item={item} onApprove={approveItem} onReject={rejectItem} />
-            ))}
-          </tbody>
-        </table>
+        // Narrow/tablet-portrait viewports: scroll the table horizontally
+        // instead of squeezing 5 columns (or letting them overflow the
+        // page) — the page itself must never scroll sideways.
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', minWidth: 640, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ textAlign: 'left', borderBottom: `2px solid ${colors.ui.border}` }}>
+                <th style={{ padding: 12 }}>Artículo</th>
+                <th style={{ padding: 12 }}>Cant</th>
+                <th style={{ padding: 12 }}>Flag</th>
+                <th style={{ padding: 12 }}>Motivo</th>
+                <th style={{ padding: 12 }}>Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <FlaggedItemRow key={item.itemId} item={item} onApprove={approveItem} onReject={rejectItem} />
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

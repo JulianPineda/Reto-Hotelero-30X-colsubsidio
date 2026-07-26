@@ -24,5 +24,17 @@ def load_model() -> SentenceTransformer:
 
 
 def embed(text: str) -> list[float]:
+    """Lowercases before encoding — confirmed live: this model treats case
+    as meaningfully different content, not noise to ignore. Catalog names
+    are stored UPPERCASE (`data/catalog.csv`) while operators dictate in
+    natural (lower/mixed) case, so without this normalization the SAME
+    phrase in different case scored only ~0.71 cosine similarity against
+    itself (`cosine('filete de basa', 'FILETE DE BASA') = 0.7136`) — below
+    several unrelated catalog items' scores against the lowercase query
+    (e.g. 'COMPOTA' at 0.83), so an unrelated item would auto-accept
+    (>=0.80) instead of the correct one. Lowercasing both sides at the one
+    choke point every embed() caller shares (catalog_sync.py's indexing,
+    searcher.py's queries, learning_service.py's taught synonyms) fixes
+    this without threshold surgery."""
     model = load_model()
-    return model.encode(text, normalize_embeddings=True).tolist()
+    return model.encode(text.lower(), normalize_embeddings=True).tolist()

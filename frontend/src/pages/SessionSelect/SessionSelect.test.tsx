@@ -25,9 +25,8 @@ beforeEach(() => {
 });
 
 describe('SessionSelect', () => {
-  it('logs in and lists sessions to review', async () => {
+  it('loads sessions to review on mount', async () => {
     mockFetchByPath({
-      '/auth/login': () => ({ access_token: 'token-abc', token_type: 'bearer', expires_in: 28800 }),
       '/sessions': () => [
         {
           id: 'session-1',
@@ -40,34 +39,22 @@ describe('SessionSelect', () => {
       ],
     });
 
-    render(<SessionSelect apiBaseUrl="http://api.test/api/v1" />);
-
-    fireEvent.change(screen.getByLabelText(/id de operario/i), { target: { value: 'SUP-1' } });
-    fireEvent.change(screen.getByLabelText(/pin/i), { target: { value: '1234' } });
-    fireEvent.click(screen.getByRole('button', { name: /ingresar/i }));
+    render(<SessionSelect apiBaseUrl="http://api.test/api/v1" authToken="token-abc" />);
 
     await waitFor(() => expect(screen.getByLabelText(/sesión a revisar/i)).toBeInTheDocument());
     expect(screen.getByText(/PSL-ALMACEN-GENERAL/)).toBeInTheDocument();
   });
 
   it('shows a message when there are no sessions yet', async () => {
-    mockFetchByPath({
-      '/auth/login': () => ({ access_token: 'token-abc', token_type: 'bearer', expires_in: 28800 }),
-      '/sessions': () => [],
-    });
+    mockFetchByPath({ '/sessions': () => [] });
 
-    render(<SessionSelect apiBaseUrl="http://api.test/api/v1" />);
-
-    fireEvent.change(screen.getByLabelText(/id de operario/i), { target: { value: 'SUP-1' } });
-    fireEvent.change(screen.getByLabelText(/pin/i), { target: { value: '1234' } });
-    fireEvent.click(screen.getByRole('button', { name: /ingresar/i }));
+    render(<SessionSelect apiBaseUrl="http://api.test/api/v1" authToken="token-abc" />);
 
     await waitFor(() => expect(screen.getByText(/no hay sesiones/i)).toBeInTheDocument());
   });
 
   it('navigates to /supervisor with the chosen session', async () => {
     mockFetchByPath({
-      '/auth/login': () => ({ access_token: 'token-abc', token_type: 'bearer', expires_in: 28800 }),
       '/sessions': () => [
         {
           id: 'session-1',
@@ -80,11 +67,7 @@ describe('SessionSelect', () => {
       ],
     });
 
-    render(<SessionSelect apiBaseUrl="http://api.test/api/v1" />);
-
-    fireEvent.change(screen.getByLabelText(/id de operario/i), { target: { value: 'SUP-1' } });
-    fireEvent.change(screen.getByLabelText(/pin/i), { target: { value: '1234' } });
-    fireEvent.click(screen.getByRole('button', { name: /ingresar/i }));
+    render(<SessionSelect apiBaseUrl="http://api.test/api/v1" authToken="token-abc" />);
 
     await waitFor(() => expect(screen.getByLabelText(/sesión a revisar/i)).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /abrir dashboard/i }));

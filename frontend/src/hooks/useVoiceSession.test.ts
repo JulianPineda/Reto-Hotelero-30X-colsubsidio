@@ -18,6 +18,8 @@ class FakeWebSocket {
   static readonly OPEN = 1;
   readyState = FakeWebSocket.OPEN;
   onmessage: ((event: { data: string }) => void) | null = null;
+  onopen: (() => void) | null = null;
+  onclose: (() => void) | null = null;
   sent: string[] = [];
 
   constructor(public url: string) {
@@ -29,7 +31,7 @@ class FakeWebSocket {
   }
 
   close() {
-    /* no-op for tests */
+    this.onclose?.();
   }
 
   emit(message: unknown) {
@@ -46,6 +48,23 @@ beforeEach(() => {
 });
 
 describe('useVoiceSession', () => {
+  it('wsReady is false until the socket opens, then true', () => {
+    const { result } = renderHook(() => useVoiceSession('ws://test/voice/demo'));
+    const ws = FakeWebSocket.instances[0];
+
+    expect(result.current.wsReady).toBe(false);
+
+    act(() => {
+      ws.onopen?.();
+    });
+    expect(result.current.wsReady).toBe(true);
+
+    act(() => {
+      ws.onclose?.();
+    });
+    expect(result.current.wsReady).toBe(false);
+  });
+
   it('resetToIdle returns the phase to idle from manual_fallback', () => {
     const { result } = renderHook(() => useVoiceSession('ws://test/voice/demo'));
     const ws = FakeWebSocket.instances[0];
@@ -112,6 +131,7 @@ describe('useVoiceSession', () => {
         expiry_date: null,
         digit_by_digit: null,
         display_text: '¿20 kg de Harina de Trigo?',
+        sin_homologar: false,
       });
     });
 
@@ -133,6 +153,7 @@ describe('useVoiceSession', () => {
         expiry_date: null,
         digit_by_digit: null,
         display_text: '¿20 kg de Harina de Trigo?',
+        sin_homologar: false,
       });
     });
 

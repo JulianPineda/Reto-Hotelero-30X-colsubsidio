@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import logging
 from uuid import UUID
 
 import jwt
@@ -141,7 +142,33 @@ async def voice_websocket(websocket: WebSocket, session_id: UUID, token: str = Q
         try:
             while True:
                 message = await websocket.receive_json()
-                response = await _dispatch(voice_session, message)
+                logging.info(
+                    "voice_websocket: recv %r (session_id=%s, connected=%s)",
+                    message.get("type"),
+                    session_id,
+                    voice_session._connected,
+                )
+                try:
+                    response = await _dispatch(voice_session, message)
+                except Exception:
+                    # CLAUDE.md §5: nunca stack traces al cliente — mensaje
+                    # genérico, detalle real solo en logs. Sin este bloque,
+                    # cualquier hiccup del proveedor de voz (confirmado en
+                    # vivo: Gemini Live cerrando la conexión con "1007
+                    # Precondition check failed") tumbaba TODA la conexión
+                    # del operario, obligando a recargar la página — ver
+                    # `recover_from_provider_failure`'s docstring.
+                    logging.exception(
+                        "voice_websocket: fallo procesando mensaje %r (session_id=%s)",
+                        message.get("type"),
+                        session_id,
+                    )
+                    await voice_session.recover_from_provider_failure()
+                    response = {
+                        "type": "error",
+                        "code": "VOICE_PROVIDER_ERROR",
+                        "message": "Se perdió la conexión de voz. Intenta de nuevo.",
+                    }
                 if response is not None:
                     async with send_lock:
                         await websocket.send_json(response)
@@ -158,7 +185,9 @@ async def _dispatch(session: VoicePTTSession, message: dict) -> dict | None:
     if msg_type == "ptt_start":
         return await session.handle_ptt_start()
     if msg_type == "audio_chunk":
-        await session.handle_audio_chunk(base64.b64decode(message["data"]))
+        # sample_rate is the browser's ACTUAL AudioContext.sampleRate, not an
+        # assumed constant — see stt_provider.py's send_audio docstring.
+        await session.handle_audio_chunk(base64.b64decode(message["data"]), int(message["sample_rate"]))
         return None
     if msg_type == "ptt_stop":
         return await session.handle_ptt_stop()

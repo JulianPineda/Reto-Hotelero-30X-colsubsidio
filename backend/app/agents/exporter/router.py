@@ -94,6 +94,7 @@ async def _run_export_job(job_id: UUID, session_id: UUID, export_format: str) ->
                         select(CountItem).where(
                             CountItem.session_id == session_id,
                             CountItem.is_approved.isnot(False),
+                            CountItem.is_deleted.is_(False),
                         )
                     )
                 )
@@ -141,7 +142,9 @@ async def _run_export_job(job_id: UUID, session_id: UUID, export_format: str) ->
                 (
                     await session.execute(
                         select(CountItem).where(
-                            CountItem.session_id == session_id, CountItem.is_approved.is_(False)
+                            CountItem.session_id == session_id,
+                            CountItem.is_approved.is_(False),
+                            CountItem.is_deleted.is_(False),
                         )
                     )
                 )

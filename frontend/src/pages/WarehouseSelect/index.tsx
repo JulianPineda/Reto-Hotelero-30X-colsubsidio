@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { CountSessionProps } from '../CountSession';
-import { login } from '../../services/auth';
 import { colors, touchTargets, typography } from '../../theme';
 
 export interface WarehouseSelectProps {
   apiBaseUrl: string;
   wsBaseUrl: string;
+  /** Already-authenticated — login happens once in `Login`, shared by both
+   * the operator and supervisor flows (T-XXX "una sola URL"). */
+  authToken: string;
 }
 
 interface WarehouseOption {
@@ -46,48 +48,42 @@ const buttonStyle = (enabled: boolean) => ({
 });
 
 /**
- * First screen of the operator flow: login (STOPGAP — see
- * `app/api/auth.py`, there is no real credential store yet) -> pick
- * warehouse + shift -> create a real CountSession (`POST /api/v1/sessions`)
- * -> hand off to CountSession with a real session_id, instead of the
- * "demo-session" placeholder App.tsx used to hardcode.
+ * Operator flow's picker step: pick warehouse + shift -> create a real
+ * CountSession (`POST /api/v1/sessions`) -> hand off to CountSession with a
+ * real session_id. Login itself happens once in `Login` (T-XXX "una sola
+ * URL" merged operator+supervisor entry) and is passed down as `authToken`.
  */
-export function WarehouseSelect({ apiBaseUrl, wsBaseUrl }: WarehouseSelectProps) {
+export function WarehouseSelect({ apiBaseUrl, wsBaseUrl, authToken }: WarehouseSelectProps) {
   const navigate = useNavigate();
-
-  const [operatorId, setOperatorId] = useState('');
-  const [pin, setPin] = useState('');
-  const [authToken, setAuthToken] = useState<string | null>(null);
-  const [loginError, setLoginError] = useState<string | null>(null);
 
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState('');
   const [shift, setShift] = useState<Shift>('morning');
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const handleLogin = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setLoginError(null);
-    setBusy(true);
-    try {
-      const token = await login(apiBaseUrl, operatorId, pin);
-
-      const warehousesResponse = await fetch(`${apiBaseUrl}/warehouses`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!warehousesResponse.ok) throw new Error('warehouses_failed');
-      const options: WarehouseOption[] = await warehousesResponse.json();
-
-      setAuthToken(token);
-      setWarehouses(options);
-      if (options.length > 0) setSelectedWarehouseId(options[0].id);
-    } catch {
-      setLoginError('No se pudo iniciar sesión. Verifica tu ID de operario y PIN.');
-    } finally {
-      setBusy(false);
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/warehouses`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (!response.ok) throw new Error('warehouses_failed');
+        const options: WarehouseOption[] = await response.json();
+        if (cancelled) return;
+        setWarehouses(options);
+        if (options.length > 0) setSelectedWarehouseId(options[0].id);
+      } catch {
+        if (!cancelled) setLoadError('No se pudieron cargar las bodegas. Intenta de nuevo.');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBaseUrl, authToken]);
 
   const handleStartSession = async () => {
     if (!authToken || !selectedWarehouseId) return;
@@ -125,92 +121,56 @@ export function WarehouseSelect({ apiBaseUrl, wsBaseUrl }: WarehouseSelectProps)
     <div style={{ padding: 24, maxWidth: 420, fontFamily: typography.fontFamily }}>
       <h1 style={{ color: colors.primary.blue }}>Piscilago — Conteo de Inventario</h1>
 
-      {authToken === null ? (
-        <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div>
-            <label htmlFor="operator-id" style={{ display: 'block', marginBottom: 4 }}>
-              ID de operario
-            </label>
-            <input
-              id="operator-id"
-              type="text"
-              value={operatorId}
-              onChange={(event) => setOperatorId(event.target.value)}
-              style={inputStyle}
-            />
-          </div>
-          <div>
-            <label htmlFor="operator-pin" style={{ display: 'block', marginBottom: 4 }}>
-              PIN
-            </label>
-            <input
-              id="operator-pin"
-              type="password"
-              inputMode="numeric"
-              value={pin}
-              onChange={(event) => setPin(event.target.value)}
-              style={inputStyle}
-            />
-          </div>
-          {loginError && <p style={{ color: colors.ui.error }}>{loginError}</p>}
-          <button
-            type="submit"
-            disabled={busy || !operatorId || !pin}
-            style={buttonStyle(!busy && !!operatorId && !!pin)}
+      {loadError && <p style={{ color: colors.ui.error }}>{loadError}</p>}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div>
+          <label htmlFor="warehouse-select" style={{ display: 'block', marginBottom: 4 }}>
+            Bodega
+          </label>
+          <select
+            id="warehouse-select"
+            value={selectedWarehouseId}
+            onChange={(event) => setSelectedWarehouseId(event.target.value)}
+            style={inputStyle}
           >
-            Ingresar
-          </button>
-        </form>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div>
-            <label htmlFor="warehouse-select" style={{ display: 'block', marginBottom: 4 }}>
-              Bodega
-            </label>
-            <select
-              id="warehouse-select"
-              value={selectedWarehouseId}
-              onChange={(event) => setSelectedWarehouseId(event.target.value)}
-              style={inputStyle}
-            >
-              {warehouses.map((warehouse) => (
-                <option key={warehouse.id} value={warehouse.id}>
-                  {warehouse.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor="shift-select" style={{ display: 'block', marginBottom: 4 }}>
-              Turno
-            </label>
-            <select
-              id="shift-select"
-              value={shift}
-              onChange={(event) => setShift(event.target.value as Shift)}
-              style={inputStyle}
-            >
-              {(Object.entries(SHIFT_LABELS) as [Shift, string][]).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {sessionError && <p style={{ color: colors.ui.error }}>{sessionError}</p>}
-
-          <button
-            type="button"
-            onClick={handleStartSession}
-            disabled={busy || !selectedWarehouseId}
-            style={buttonStyle(!busy && !!selectedWarehouseId)}
-          >
-            Iniciar conteo
-          </button>
+            {warehouses.map((warehouse) => (
+              <option key={warehouse.id} value={warehouse.id}>
+                {warehouse.name}
+              </option>
+            ))}
+          </select>
         </div>
-      )}
+
+        <div>
+          <label htmlFor="shift-select" style={{ display: 'block', marginBottom: 4 }}>
+            Turno
+          </label>
+          <select
+            id="shift-select"
+            value={shift}
+            onChange={(event) => setShift(event.target.value as Shift)}
+            style={inputStyle}
+          >
+            {(Object.entries(SHIFT_LABELS) as [Shift, string][]).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {sessionError && <p style={{ color: colors.ui.error }}>{sessionError}</p>}
+
+        <button
+          type="button"
+          onClick={handleStartSession}
+          disabled={busy || !selectedWarehouseId}
+          style={buttonStyle(!busy && !!selectedWarehouseId)}
+        >
+          Iniciar conteo
+        </button>
+      </div>
     </div>
   );
 }

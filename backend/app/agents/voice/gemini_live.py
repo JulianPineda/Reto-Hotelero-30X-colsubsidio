@@ -70,6 +70,24 @@ start`/`activity_end`, called from `session.py`'s `handle_ptt_start`/
 `handle_ptt_stop` — PTT already knows exactly when speech starts and stops,
 so there's no reason to make Gemini guess.
 
+SECOND UTTERANCE HANGS ON A REUSED CONNECTION (confirmed 2026-07-25, live
+and reproduced in isolation): manual activity-detection mode doesn't
+reliably support a second start_of_speech()/end_of_speech() turn on a
+connection already used for one — the SAME audio that transcribes
+correctly on a fresh connection just hangs forever (no transcript, no
+error) on a reused one. `session.py`'s `_reconnect_provider` now tears down
+and reconnects for every utterance instead of reusing one connection for
+the whole PTT session. That in turn surfaced THIS bug: reconnecting called
+`disconnect()` then `connect()` on the same `GeminiLiveSTTProvider`
+instance, but `connect()` never reset `_transcript_queue`/`_audio_queue` —
+so a `None` sentinel left over from the previous connection's cancelled
+`_drain_task` (pushed in its `finally` block) sat at the front of the
+queue and got consumed by the NEXT utterance's `receive()` instead of its
+real transcript, producing silent hangs or spurious "STT_UNAVAILABLE"
+errors depending on timing. Fixed by having `connect()` always create
+fresh queues/flags, making this instance safe to disconnect-then-reconnect
+repeatedly.
+
 AUDIO-LESS TURN FLAKINESS (confirmed 2026-07-25, root-caused with a real
 billed key): `speak()` initially appeared to never deliver audio through
 `receive_audio()`. Bypassing this class entirely with a raw diagnostic
@@ -90,6 +108,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 from collections.abc import AsyncIterator
 
 from google import genai
@@ -98,6 +117,8 @@ from google.genai import types
 from app.agents.voice.schemas import SessionConfig, TranscriptEvent, TranscriptEventType
 from app.agents.voice.stt_provider import STTProvider
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 MODEL_NAME = "gemini-3.1-flash-live-preview"  # ADR-001 — from a confirmed-working reference (see module docstring)
 
@@ -141,6 +162,22 @@ class GeminiLiveSTTProvider(STTProvider):
         self._turn_had_audio: bool = False
 
     async def connect(self, session_config: SessionConfig) -> None:
+        # Fresh per-connection state. This instance is reused across
+        # multiple ptt_start cycles within one WS session (session.py's
+        # `_reconnect_provider` calls disconnect() then connect() on the
+        # SAME object, since a fresh connection is required per utterance —
+        # see "SECOND UTTERANCE HANGS" below). Without resetting these, a
+        # `None` sentinel left over from the previous connection's
+        # cancelled `_drain_task` (pushed in its `finally` block) sits at
+        # the front of the queue and gets consumed by the NEXT utterance's
+        # `receive()` call instead of its real transcript — confirmed live:
+        # this produced both silent hangs and "STT_UNAVAILABLE" errors
+        # inconsistently depending on timing, until this fix.
+        self._transcript_queue = asyncio.Queue()
+        self._audio_queue = asyncio.Queue()
+        self._turn_complete_event = asyncio.Event()
+        self._turn_had_audio = False
+
         live_config = types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             system_instruction=TTS_SYSTEM_INSTRUCTION,
@@ -160,6 +197,7 @@ class GeminiLiveSTTProvider(STTProvider):
         )
         self._session_cm = self._client.aio.live.connect(model=MODEL_NAME, config=live_config)
         self._session = await self._session_cm.__aenter__()
+        logger.info("gemini_live: connect() done, session_id=%s", getattr(self._session, "session_id", None))
         self._drain_task = asyncio.create_task(self._drain())
 
     async def _drain(self) -> None:
@@ -190,6 +228,7 @@ class GeminiLiveSTTProvider(STTProvider):
                         await self._audio_queue.put(base64.b64encode(raw).decode("ascii"))
 
                 if getattr(server_content, "turn_complete", False):
+                    logger.info("gemini_live: input_transcription final=%r", accumulated_text)
                     await self._transcript_queue.put(
                         TranscriptEvent(type=TranscriptEventType.FINAL, text=accumulated_text, confidence=None)
                     )
@@ -201,13 +240,15 @@ class GeminiLiveSTTProvider(STTProvider):
     async def start_of_speech(self) -> None:
         if self._session is None:
             raise RuntimeError("call connect() before start_of_speech()")
+        logger.info("gemini_live: sending activity_start")
         await self._session.send_realtime_input(activity_start=types.ActivityStart())
+        logger.info("gemini_live: activity_start sent OK")
 
-    async def send_audio(self, chunk: bytes) -> None:
+    async def send_audio(self, chunk: bytes, sample_rate: int) -> None:
         if self._session is None:
             raise RuntimeError("call connect() before send_audio()")
         await self._session.send_realtime_input(
-            audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
+            audio=types.Blob(data=chunk, mime_type=f"audio/pcm;rate={sample_rate}")
         )
 
     async def end_of_speech(self) -> None:

@@ -27,6 +27,38 @@ def test_classify_auto_accepts_high_score():
     assert result.alternatives == []
 
 
+def test_classify_falls_back_to_alternatives_when_top_two_are_near_tied():
+    """Confirmed live: 'aceite vegetal' scored 0.8726 against 'ACEITE DE
+    AJONJOLI' and 0.8644 against the correct-ish 'ACEITE' — both clear
+    AUTO_ACCEPT_THRESHOLD, but the ~0.008 gap is noise, not real
+    confidence. Auto-accepting the top score alone silently picked the
+    wrong item; this must ask the operator instead."""
+    matches = [
+        {"oracle_code": "7292", "name": "ACEITE DE AJONJOLI", "unit": "L", "is_perishable": False, "score": 0.8726},
+        {"oracle_code": "7290", "name": "ACEITE", "unit": "L", "is_perishable": False, "score": 0.8644},
+        {"oracle_code": "7293", "name": "ACEITE DE OLIVA", "unit": "L", "is_perishable": False, "score": 0.7862},
+    ]
+
+    result = searcher.classify(matches)
+
+    assert result.oracle_code is None
+    assert result.requires_operator_selection is True
+    assert result.sin_homologar is False
+    assert [a.oracle_code for a in result.alternatives] == ["7292", "7290", "7293"]
+
+
+def test_classify_auto_accepts_when_top_two_are_clearly_separated():
+    matches = [
+        {"oracle_code": "HAR-001", "name": "Harina de Trigo", "unit": "kg", "is_perishable": False, "score": 0.95},
+        {"oracle_code": "HAR-002", "name": "Harina de Maiz", "unit": "kg", "is_perishable": False, "score": 0.60},
+    ]
+
+    result = searcher.classify(matches)
+
+    assert result.oracle_code == "HAR-001"
+    assert result.requires_operator_selection is False
+
+
 def test_classify_returns_alternatives_for_mid_score():
     matches = [
         {

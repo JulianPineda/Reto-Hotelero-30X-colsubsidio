@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { SupervisorDashboardProps } from '../SupervisorDashboard';
-import { login } from '../../services/auth';
 import { colors, touchTargets, typography } from '../../theme';
 
 export interface SessionSelectProps {
   apiBaseUrl: string;
+  /** Already-authenticated — login happens once in `Login`, shared by both
+   * the operator and supervisor flows (T-XXX "una sola URL"). */
+  authToken: string;
 }
 
 interface SessionOption {
@@ -46,47 +48,40 @@ const buttonStyle = (enabled: boolean) => ({
 });
 
 /**
- * Entry screen for the Supervisor Dashboard flow: login (same STOPGAP as
- * WarehouseSelect — see app/api/auth.py) -> pick which session to review
+ * Supervisor flow's picker step: list sessions to review
  * (`GET /api/v1/sessions`) -> hand off to SupervisorDashboard with a real
- * session_id + token via router state, replacing the "demo-session" +
- * empty-string token App.tsx used to hardcode — which broke outright once
- * the JWT retrofit added auth to every supervisor endpoint.
+ * session_id + token via router state. Login itself happens once in
+ * `Login` (T-XXX "una sola URL" merged operator+supervisor entry) and is
+ * passed down as `authToken`.
  */
-export function SessionSelect({ apiBaseUrl }: SessionSelectProps) {
+export function SessionSelect({ apiBaseUrl, authToken }: SessionSelectProps) {
   const navigate = useNavigate();
-
-  const [operatorId, setOperatorId] = useState('');
-  const [pin, setPin] = useState('');
-  const [authToken, setAuthToken] = useState<string | null>(null);
-  const [loginError, setLoginError] = useState<string | null>(null);
 
   const [sessionOptions, setSessionOptions] = useState<SessionOption[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const handleLogin = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setLoginError(null);
-    setBusy(true);
-    try {
-      const token = await login(apiBaseUrl, operatorId, pin);
-
-      const sessionsResponse = await fetch(`${apiBaseUrl}/sessions`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!sessionsResponse.ok) throw new Error('sessions_failed');
-      const options: SessionOption[] = await sessionsResponse.json();
-
-      setAuthToken(token);
-      setSessionOptions(options);
-      if (options.length > 0) setSelectedSessionId(options[0].id);
-    } catch {
-      setLoginError('No se pudo iniciar sesión. Verifica tu ID de operario y PIN.');
-    } finally {
-      setBusy(false);
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/sessions`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (!response.ok) throw new Error('sessions_failed');
+        const options: SessionOption[] = await response.json();
+        if (cancelled) return;
+        setSessionOptions(options);
+        if (options.length > 0) setSelectedSessionId(options[0].id);
+      } catch {
+        if (!cancelled) setLoadError('No se pudieron cargar las sesiones. Intenta de nuevo.');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBaseUrl, authToken]);
 
   const handleOpenDashboard = () => {
     if (!authToken || !selectedSessionId) return;
@@ -106,77 +101,41 @@ export function SessionSelect({ apiBaseUrl }: SessionSelectProps) {
     <div style={{ padding: 24, maxWidth: 480, fontFamily: typography.fontFamily }}>
       <h1 style={{ color: colors.primary.blue }}>Piscilago — Supervisor</h1>
 
-      {authToken === null ? (
-        <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div>
-            <label htmlFor="supervisor-operator-id" style={{ display: 'block', marginBottom: 4 }}>
-              ID de operario
-            </label>
-            <input
-              id="supervisor-operator-id"
-              type="text"
-              value={operatorId}
-              onChange={(event) => setOperatorId(event.target.value)}
-              style={inputStyle}
-            />
-          </div>
-          <div>
-            <label htmlFor="supervisor-pin" style={{ display: 'block', marginBottom: 4 }}>
-              PIN
-            </label>
-            <input
-              id="supervisor-pin"
-              type="password"
-              inputMode="numeric"
-              value={pin}
-              onChange={(event) => setPin(event.target.value)}
-              style={inputStyle}
-            />
-          </div>
-          {loginError && <p style={{ color: colors.ui.error }}>{loginError}</p>}
-          <button
-            type="submit"
-            disabled={busy || !operatorId || !pin}
-            style={buttonStyle(!busy && !!operatorId && !!pin)}
-          >
-            Ingresar
-          </button>
-        </form>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {sessionOptions.length === 0 ? (
-            <p style={{ color: colors.ui.textSecondary }}>No hay sesiones de conteo todavía.</p>
-          ) : (
-            <div>
-              <label htmlFor="session-select" style={{ display: 'block', marginBottom: 4 }}>
-                Sesión a revisar
-              </label>
-              <select
-                id="session-select"
-                value={selectedSessionId}
-                onChange={(event) => setSelectedSessionId(event.target.value)}
-                style={inputStyle}
-              >
-                {sessionOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.warehouse_code} · {SHIFT_LABELS[option.shift] ?? option.shift} ·{' '}
-                    {option.flagged_items} flaggeado(s)
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+      {loadError && <p style={{ color: colors.ui.error }}>{loadError}</p>}
 
-          <button
-            type="button"
-            onClick={handleOpenDashboard}
-            disabled={busy || !selectedSessionId}
-            style={buttonStyle(!busy && !!selectedSessionId)}
-          >
-            Abrir dashboard
-          </button>
-        </div>
-      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {sessionOptions.length === 0 ? (
+          <p style={{ color: colors.ui.textSecondary }}>No hay sesiones de conteo todavía.</p>
+        ) : (
+          <div>
+            <label htmlFor="session-select" style={{ display: 'block', marginBottom: 4 }}>
+              Sesión a revisar
+            </label>
+            <select
+              id="session-select"
+              value={selectedSessionId}
+              onChange={(event) => setSelectedSessionId(event.target.value)}
+              style={inputStyle}
+            >
+              {sessionOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.warehouse_code} · {SHIFT_LABELS[option.shift] ?? option.shift} ·{' '}
+                  {option.flagged_items} flaggeado(s)
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={handleOpenDashboard}
+          disabled={!selectedSessionId}
+          style={buttonStyle(!!selectedSessionId)}
+        >
+          Abrir dashboard
+        </button>
+      </div>
     </div>
   );
 }

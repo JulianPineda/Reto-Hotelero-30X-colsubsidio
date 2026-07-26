@@ -32,6 +32,7 @@ describe('reduceVoiceEvent', () => {
       expiry_date: null,
       digit_by_digit: null,
       display_text: '¿20 kg de Harina de Trigo?',
+      sin_homologar: false,
     };
 
     const result = reduceVoiceEvent(initialVoiceUIState, message);

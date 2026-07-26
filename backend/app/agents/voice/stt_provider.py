@@ -27,7 +27,14 @@ class STTProvider(ABC):
         ...
 
     @abstractmethod
-    async def send_audio(self, chunk: bytes) -> None: ...
+    async def send_audio(self, chunk: bytes, sample_rate: int) -> None:
+        """`sample_rate` is the browser's ACTUAL capture rate
+        (`AudioContext.sampleRate`), not an assumed constant — confirmed
+        live that a real device's mic reported 48000 while this code used
+        to hardcode 16000 in the mime_type declared to Gemini, which is
+        exactly the kind of mismatch that produces consistently wrong,
+        different-every-time transcriptions (see audioCapture.ts)."""
+        ...
 
     @abstractmethod
     async def end_of_speech(self) -> None:

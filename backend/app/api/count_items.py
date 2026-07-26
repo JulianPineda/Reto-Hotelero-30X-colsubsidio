@@ -8,7 +8,7 @@ persist + run the Auditor Agent.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,6 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.voice.schemas import OperatorClaims
 from app.api.deps import get_current_operator
 from app.database import get_db
+from app.models.count_item import CountItem
+from app.models.count_session import CountSession
+from app.schemas.events import EventType, ItemDeletedPayload
+from app.services.event_store import append_event
 from app.services.orchestrator import (
     PersistedCountItem,
     SessionNotFoundError,
@@ -96,3 +100,59 @@ async def create_count_item(
 
     await session.commit()
     return CountItemResponse.from_result(result)
+
+
+@router.delete("/{item_id}", status_code=200)
+async def delete_count_item(
+    item_id: UUID,
+    session: AsyncSession = Depends(get_db),
+    operator: OperatorClaims = Depends(get_current_operator),
+) -> dict:
+    """Undo for a mis-dictated item ("el operario se equivocó"). The
+    `ItemDeleted` event type/payload (schemas/events.py) existed from the
+    start of this project but nothing ever emitted it — count_items had no
+    column to record a deletion on either. Soft-delete (a flag, not an
+    actual row DELETE) because count_items is already a mutable read-model
+    elsewhere (is_approved, corrected_quantity are updated in place too) —
+    CLAUDE.md §3.7's append-only rule is specifically about the `events`
+    table, which still gets the real, permanent record via ItemDeleted.
+    """
+    item = await session.get(CountItem, item_id)
+    if item is None or item.is_deleted:
+        raise HTTPException(status_code=404, detail={"error": "ITEM_NOT_FOUND"})
+
+    count_session = await session.get(CountSession, item.session_id)
+    if count_session is None:
+        raise HTTPException(status_code=404, detail={"error": "SESSION_NOT_FOUND"})
+    if count_session.status == "exported":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "SESSION_ALREADY_EXPORTED",
+                "message": "No se puede eliminar un ítem de una sesión ya exportada.",
+            },
+        )
+
+    await append_event(
+        session,
+        event_type=EventType.ITEM_DELETED,
+        aggregate_id=item.id,
+        aggregate_type="CountItem",
+        payload=ItemDeletedPayload(
+            oracle_code=item.oracle_code,
+            quantity=float(item.quantity_confirmed or item.parsed_quantity),
+            deletion_source="operator_manual",
+        ).model_dump(),
+        warehouse_id=count_session.warehouse_id,
+        created_by=operator.operator_id,
+    )
+
+    item.is_deleted = True
+    item.deleted_at = datetime.now(timezone.utc)
+    item.deleted_by = operator.operator_id
+    count_session.total_items = max(0, (count_session.total_items or 0) - 1)
+    if item.is_flagged:
+        count_session.flagged_items = max(0, (count_session.flagged_items or 0) - 1)
+
+    await session.commit()
+    return {"item_id": str(item.id), "deleted": True}

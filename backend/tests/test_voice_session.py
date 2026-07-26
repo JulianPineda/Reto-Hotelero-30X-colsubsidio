@@ -13,20 +13,25 @@ class FakeSTTProvider(STTProvider):
         self._events = events
         self._audio_chunks = audio_chunks or []
         self.connected = False
+        self.connect_count = 0
         self.sent_chunks: list[bytes] = []
+        self.sent_sample_rates: list[int] = []
         self.disconnected = False
+        self.disconnect_count = 0
         self.spoken_texts: list[str] = []
         self.speech_started = False
         self.speech_ended = False
 
     async def connect(self, session_config: SessionConfig) -> None:
         self.connected = True
+        self.connect_count += 1
 
     async def start_of_speech(self) -> None:
         self.speech_started = True
 
-    async def send_audio(self, chunk: bytes) -> None:
+    async def send_audio(self, chunk: bytes, sample_rate: int) -> None:
         self.sent_chunks.append(chunk)
+        self.sent_sample_rates.append(sample_rate)
 
     async def end_of_speech(self) -> None:
         self.speech_ended = True
@@ -44,6 +49,7 @@ class FakeSTTProvider(STTProvider):
 
     async def disconnect(self) -> None:
         self.disconnected = True
+        self.disconnect_count += 1
 
 
 def _session_config() -> SessionConfig:
@@ -59,6 +65,29 @@ async def test_ptt_start_transitions_to_listening_and_connects():
     assert response == {"type": "listening"}
     assert session.state == VoiceState.LISTENING
     assert stt.connected is True
+
+
+async def test_ptt_start_reconnects_fresh_for_every_utterance():
+    """Confirmed live and reproduced in isolation: reusing one Gemini Live
+    connection across multiple ptt_start/ptt_stop cycles hangs forever on
+    the SECOND utterance (never delivers a transcript) — a real limitation
+    of manual activity-detection mode in this preview model. A fresh
+    connection per utterance is the fix (see `_reconnect_provider`'s
+    docstring)."""
+    stt = FakeSTTProvider(events=[])
+    session = VoicePTTSession(stt_provider=stt, session_config=_session_config())
+
+    await session.handle_ptt_start()
+    assert stt.connect_count == 1
+    assert stt.disconnect_count == 0
+
+    await session.handle_ptt_start()
+    assert stt.connect_count == 2
+    assert stt.disconnect_count == 1  # the first connection was torn down before the second was opened
+
+    await session.handle_ptt_start()
+    assert stt.connect_count == 3
+    assert stt.disconnect_count == 2
 
 
 async def test_ptt_start_signals_start_of_speech():
@@ -88,12 +117,13 @@ async def test_audio_chunk_forwarded_only_while_listening():
     stt = FakeSTTProvider(events=[])
     session = VoicePTTSession(stt_provider=stt, session_config=_session_config())
 
-    await session.handle_audio_chunk(b"ignored-while-idle")
+    await session.handle_audio_chunk(b"ignored-while-idle", 48000)
     assert stt.sent_chunks == []
 
     await session.handle_ptt_start()
-    await session.handle_audio_chunk(b"chunk-1")
+    await session.handle_audio_chunk(b"chunk-1", 48000)
     assert stt.sent_chunks == [b"chunk-1"]
+    assert stt.sent_sample_rates == [48000]
 
 
 async def test_ptt_stop_with_high_confidence_moves_to_confirming(monkeypatch):
@@ -115,6 +145,33 @@ async def test_ptt_stop_with_high_confidence_moves_to_confirming(monkeypatch):
     assert response["unit"] == "kg"
     assert session.state == VoiceState.CONFIRMING
     assert session.pending_item is not None
+    # _default_homologate (no real Catalog Agent injected) always reports
+    # sin_homologar=True — this exercises that flag reaching the response.
+    assert response["sin_homologar"] is True
+
+
+async def test_confirmation_reports_sin_homologar_false_for_a_known_item(monkeypatch):
+    """Confirmed live: an unknown-product warning needs the frontend to
+    know at confirmation time, not just as a trailing label after saving —
+    this covers the "known item" branch (sin_homologar=False) reaching the
+    confirmation_request response."""
+
+    async def fake_homologate(article: str) -> dict:
+        return {"oracle_code": "SAL-001", "name": "Sal de Cocina", "is_perishable": False, "sin_homologar": False}
+
+    events = [TranscriptEvent(type=TranscriptEventType.FINAL, text="veinte kilos de sal", confidence=0.9)]
+    stt = FakeSTTProvider(events=events)
+    session = VoicePTTSession(stt_provider=stt, session_config=_session_config(), homologate=fake_homologate)
+    await session.handle_ptt_start()
+
+    async def fake_extract(transcript: str):
+        return extractor._LLMExtraction(article="sal", quantity=20.0, unit="kilos")
+
+    monkeypatch.setattr(extractor, "extract", fake_extract)
+
+    response = await session.handle_ptt_stop()
+
+    assert response["sin_homologar"] is False
 
 
 async def test_ptt_stop_with_low_confidence_asks_to_repeat():
@@ -256,6 +313,33 @@ async def test_barge_in_interrupts_and_returns_to_listening():
 
     assert response == {"type": "listening"}
     assert session.state == VoiceState.LISTENING
+
+
+async def test_recover_from_provider_failure_resets_state_for_a_clean_retry():
+    """See router.py's `_dispatch` try/except — confirmed live: a Gemini
+    Live hiccup (`1007 Precondition check failed`) raised out of
+    `handle_ptt_start`, and without this recovery path the operator's whole
+    WS connection died with no way back except reloading the page."""
+    stt = FakeSTTProvider(events=[])
+    session = VoicePTTSession(stt_provider=stt, session_config=_session_config())
+    await session.handle_ptt_start()
+    session.state = VoiceState.CONFIRMING
+    session.pending_item = object()  # anything non-None
+    session.low_confidence_attempts = 2
+
+    await session.recover_from_provider_failure()
+
+    assert session.state == VoiceState.IDLE
+    assert session.pending_item is None
+    assert session.low_confidence_attempts == 0
+    assert session._connected is False
+    assert stt.disconnected is True
+
+    # A subsequent ptt_start must reconnect from scratch, not assume it's
+    # still connected.
+    stt.connected = False
+    await session.handle_ptt_start()
+    assert stt.connected is True
 
 
 async def test_close_disconnects_only_if_connected():
@@ -466,6 +550,7 @@ async def test_quantity_confirmation_speaks_the_display_text(monkeypatch):
 
     monkeypatch.setattr(extractor, "extract", fake_extract)
     response = await session.handle_ptt_stop()
+    await asyncio.sleep(0)  # speak() is fire-and-forget now — let its background task run
 
     assert stt.spoken_texts == [response["display_text"]]
 
@@ -483,6 +568,7 @@ async def test_expiry_date_request_speaks_the_question(monkeypatch):
 
     monkeypatch.setattr(extractor, "extract", fake_extract)
     response = await session.handle_ptt_stop()
+    await asyncio.sleep(0)  # speak() is fire-and-forget now — let its background task run
 
     assert stt.spoken_texts == [response["message"]]
 
@@ -505,5 +591,6 @@ async def test_expiry_date_confirmation_speaks_the_display_text(monkeypatch):
         TranscriptEvent(type=TranscriptEventType.FINAL, text="quince de agosto de 2026", confidence=0.9)
     ]
     response = await session.handle_ptt_stop()
+    await asyncio.sleep(0)  # speak() is fire-and-forget now — let its background task run
 
     assert stt.spoken_texts[-1] == response["display_text"]

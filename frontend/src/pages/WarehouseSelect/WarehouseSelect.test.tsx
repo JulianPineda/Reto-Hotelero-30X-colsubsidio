@@ -25,50 +25,42 @@ beforeEach(() => {
 });
 
 describe('WarehouseSelect', () => {
-  it('logs in, loads warehouses, and shows the picker', async () => {
+  it('loads warehouses on mount and shows the picker', async () => {
     mockFetchByPath({
-      '/auth/login': () => ({ access_token: 'token-abc', token_type: 'bearer', expires_in: 28800 }),
       '/warehouses': () => [
         { id: 'wh-1', code: 'PSL-ALMACEN-GENERAL', name: 'Almacén General' },
         { id: 'wh-2', code: 'PSL-ZOO', name: 'Zoológico' },
       ],
     });
 
-    render(<WarehouseSelect apiBaseUrl="http://api.test/api/v1" wsBaseUrl="ws://api.test/ws" />);
-
-    fireEvent.change(screen.getByLabelText(/id de operario/i), { target: { value: 'OP-231' } });
-    fireEvent.change(screen.getByLabelText(/pin/i), { target: { value: '1234' } });
-    fireEvent.click(screen.getByRole('button', { name: /ingresar/i }));
+    render(
+      <WarehouseSelect apiBaseUrl="http://api.test/api/v1" wsBaseUrl="ws://api.test/ws" authToken="token-abc" />,
+    );
 
     await waitFor(() => expect(screen.getByLabelText(/bodega/i)).toBeInTheDocument());
     expect(screen.getByRole('option', { name: 'Almacén General' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Zoológico' })).toBeInTheDocument();
   });
 
-  it('shows a login error when the request fails', async () => {
+  it('shows a load error when the warehouses request fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
 
-    render(<WarehouseSelect apiBaseUrl="http://api.test/api/v1" wsBaseUrl="ws://api.test/ws" />);
+    render(
+      <WarehouseSelect apiBaseUrl="http://api.test/api/v1" wsBaseUrl="ws://api.test/ws" authToken="token-abc" />,
+    );
 
-    fireEvent.change(screen.getByLabelText(/id de operario/i), { target: { value: 'OP-231' } });
-    fireEvent.change(screen.getByLabelText(/pin/i), { target: { value: '1234' } });
-    fireEvent.click(screen.getByRole('button', { name: /ingresar/i }));
-
-    await waitFor(() => expect(screen.getByText(/no se pudo iniciar sesión/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/no se pudieron cargar las bodegas/i)).toBeInTheDocument());
   });
 
   it('creates a session and navigates to /count with the right props', async () => {
     mockFetchByPath({
-      '/auth/login': () => ({ access_token: 'token-abc', token_type: 'bearer', expires_in: 28800 }),
       '/warehouses': () => [{ id: 'wh-1', code: 'PSL-ALMACEN-GENERAL', name: 'Almacén General' }],
       '/sessions': () => ({ id: 'session-xyz', warehouse_id: 'wh-1', operator_id: 'OP-231', shift: 'morning', status: 'in_progress' }),
     });
 
-    render(<WarehouseSelect apiBaseUrl="http://api.test/api/v1" wsBaseUrl="ws://api.test/ws" />);
-
-    fireEvent.change(screen.getByLabelText(/id de operario/i), { target: { value: 'OP-231' } });
-    fireEvent.change(screen.getByLabelText(/pin/i), { target: { value: '1234' } });
-    fireEvent.click(screen.getByRole('button', { name: /ingresar/i }));
+    render(
+      <WarehouseSelect apiBaseUrl="http://api.test/api/v1" wsBaseUrl="ws://api.test/ws" authToken="token-abc" />,
+    );
 
     await waitFor(() => expect(screen.getByLabelText(/bodega/i)).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /iniciar conteo/i }));

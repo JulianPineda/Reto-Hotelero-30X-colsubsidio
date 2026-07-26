@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,6 +7,15 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import init_db_pool, close_db_pool
+
+# `LOG_LEVEL` (.env) existed but was never wired to Python's logging module —
+# every `logging.info`/`logger.info` call anywhere in the app was silently
+# dropped by the root logger's default WARNING level. Confirmed live: added
+# diagnostic INFO logs to debug a Gemini Live connection issue and none of
+# them appeared, only the pre-existing ERROR-level ones. This must run before
+# any module-level `logging.getLogger(__name__)` call executes, so it's the
+# first thing in this file, ahead of every other import that touches logging.
+logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 @asynccontextmanager
