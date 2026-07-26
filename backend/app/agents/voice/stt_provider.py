@@ -16,7 +16,23 @@ class STTProvider(ABC):
     async def connect(self, session_config: SessionConfig) -> None: ...
 
     @abstractmethod
+    async def start_of_speech(self) -> None:
+        """Marks the start of one PTT utterance. Push-to-talk already tells
+        us exactly when the user starts/stops talking — providers with a
+        manual-activity-detection mode (Gemini Live) should use that signal
+        instead of guessing from silence, which never arrives in a PTT flow
+        (mic capture just stops the instant the button is released, so
+        automatic VAD's "silence following speech" condition never occurs;
+        confirmed live — see gemini_live.py's module docstring)."""
+        ...
+
+    @abstractmethod
     async def send_audio(self, chunk: bytes) -> None: ...
+
+    @abstractmethod
+    async def end_of_speech(self) -> None:
+        """Marks the end of one PTT utterance — see `start_of_speech`."""
+        ...
 
     @abstractmethod
     async def receive(self) -> AsyncIterator[TranscriptEvent]: ...

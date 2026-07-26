@@ -120,6 +120,7 @@ class VoicePTTSession:
             await self.stt_provider.connect(self.session_config)
             self._connected = True
             self._audio_relay_task = asyncio.create_task(self._relay_audio_out())
+        await self.stt_provider.start_of_speech()
         self.state = VoiceState.LISTENING
         return {"type": "listening"}
 
@@ -140,6 +141,7 @@ class VoicePTTSession:
     async def handle_ptt_stop(self) -> dict:
         previous_state = self.state
         self.state = VoiceState.PROCESSING
+        await self.stt_provider.end_of_speech()
 
         final_text: str | None = None
         final_confidence: float | None = None

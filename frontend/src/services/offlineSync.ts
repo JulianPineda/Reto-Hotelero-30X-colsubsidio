@@ -50,6 +50,9 @@ export async function callHomologate(
     headers: authHeaders(ctx),
     body: JSON.stringify({ article, warehouse_id: ctx.warehouseId, unit_hint: unitHint }),
   });
+  if (handleUnauthorized(response, '/select')) {
+    throw new Error('UNAUTHORIZED');
+  }
   return response.json();
 }
 
@@ -96,6 +99,9 @@ async function callPersistCountItem(
       is_offline: isOffline,
     }),
   });
+  if (handleUnauthorized(response, '/select')) {
+    throw new Error('UNAUTHORIZED');
+  }
   if (!response.ok) {
     const body: { detail?: { error?: string } } | null = await response.json().catch(() => null);
     throw new PersistCountItemError(body?.detail?.error ?? 'PERSIST_FAILED');

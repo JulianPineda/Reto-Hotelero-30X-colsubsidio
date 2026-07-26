@@ -70,11 +70,20 @@ async def get_flagged_items(
     session: AsyncSession = Depends(get_db),
     _operator: OperatorClaims = Depends(get_current_operator),
 ) -> list[FlaggedItemResponse]:
+    # is_flagged is a permanent historical fact (this item WAS anomalous) —
+    # without also requiring is_approved IS NULL, an item never leaves this
+    # queue once approved/rejected, since nothing ever clears is_flagged.
+    # Confirmed live via Playwright: approving a row through the dashboard
+    # returned 200 but the row stayed forever until this filter was added.
     rows = (
         await session.execute(
             select(CountItem, CatalogItem)
             .outerjoin(CatalogItem, CountItem.catalog_item_id == CatalogItem.id)
-            .where(CountItem.session_id == session_id, CountItem.is_flagged.is_(True))
+            .where(
+                CountItem.session_id == session_id,
+                CountItem.is_flagged.is_(True),
+                CountItem.is_approved.is_(None),
+            )
         )
     ).all()
 

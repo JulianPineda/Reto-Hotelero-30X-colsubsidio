@@ -93,12 +93,28 @@ class _FakeResultRows:
         return self._rows
 
 
+class _FakeScalarsResult:
+    """`_enrich_with_canonical_fields`'s `select(CatalogItem).where(...)`
+    query result shape — `.scalars()`, not `.all()`."""
+
+    def __init__(self, items):
+        self._items = items
+
+    def scalars(self):
+        return self._items
+
+
 class _FakeSession:
-    def __init__(self, rows):
-        self._rows = rows
+    """Queue-based: each `execute()` call pops the next canned response, in
+    the same order `run_homologation` issues its queries — the fuzzy-name
+    lookup (`.all()`-shaped) and/or the canonical-field enrichment
+    (`.scalars()`-shaped) that now runs whenever any matches are found."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
 
     async def execute(self, *_args, **_kwargs):
-        return _FakeResultRows(self._rows)
+        return self._responses.pop(0)
 
 
 async def _noop_close():
@@ -139,7 +155,8 @@ async def test_homologate_uses_vector_search_when_enough_matches(monkeypatch):
     monkeypatch.setattr("app.agents.catalog.router.get_qdrant_client", _fake_get_qdrant_client)
 
     request = HomologateRequest(article="harina de trigo", warehouse_id=uuid.uuid4())
-    result = await homologate(request, session=_FakeSession(rows=[]), _operator=None)
+    session = _FakeSession(responses=[_FakeScalarsResult([])])  # enrichment query
+    result = await homologate(request, session=session, _operator=None)
 
     assert result.oracle_code == "HAR-001"
     assert result.match_method == "vector_search"
@@ -158,10 +175,50 @@ async def test_homologate_falls_back_to_fuzzy_when_few_matches(monkeypatch):
     ]
 
     request = HomologateRequest(article="aceite", warehouse_id=uuid.uuid4())
-    result = await homologate(request, session=_FakeSession(rows=rows), _operator=None)
+    session = _FakeSession(
+        responses=[_FakeResultRows(rows), _FakeScalarsResult([])]  # fuzzy names, then enrichment
+    )
+    result = await homologate(request, session=session, _operator=None)
 
     assert result.match_method == "fuzzy_fallback"
     assert len(result.alternatives) >= 1
+
+
+async def test_homologate_prefers_canonical_fields_over_synonym_point_payload(monkeypatch):
+    """A learned-synonym Qdrant point (`catalog_sync.upsert_synonym`) only
+    stores `{oracle_code, name: <raw synonym>, source}` — no unit, no
+    is_perishable. Confirmed live: homologating a taught synonym returned
+    the operator's own raw phrase as `name`, and `is_perishable=None` for an
+    item that really is perishable, which would silently skip the
+    CLAUDE.md §3.6 expiry_date requirement. `run_homologation` must
+    overwrite these with the real catalog_items row."""
+
+    async def fake_vector_search(client, article):
+        return [
+            {
+                "oracle_code": "LAC-001",
+                "name": "pescaito blanco de la piscilago",  # raw synonym text, from the Qdrant payload
+                "unit": None,
+                "is_perishable": None,
+                "score": 1.0,
+            }
+        ]
+
+    monkeypatch.setattr(searcher, "vector_search", fake_vector_search)
+    monkeypatch.setattr("app.agents.catalog.router.get_qdrant_client", _fake_get_qdrant_client)
+
+    canonical_item = SimpleNamespace(oracle_code="LAC-001", name="Leche Entera 1L", unit="L", is_perishable=True)
+    request = HomologateRequest(article="pescaito blanco de la piscilago", warehouse_id=uuid.uuid4())
+    # Only 1 match (< 3) also triggers the fuzzy-fallback names query first;
+    # empty catalog_names means fuzzy finds nothing, so the original
+    # vector-search match survives to the enrichment step.
+    session = _FakeSession(responses=[_FakeResultRows([]), _FakeScalarsResult([canonical_item])])
+    result = await homologate(request, session=session, _operator=None)
+
+    assert result.oracle_code == "LAC-001"
+    assert result.name == "Leche Entera 1L"
+    assert result.unit == "L"
+    assert result.is_perishable is True
 
 
 async def test_homologate_sin_homologar_when_nothing_matches(monkeypatch):
@@ -172,7 +229,8 @@ async def test_homologate_sin_homologar_when_nothing_matches(monkeypatch):
     monkeypatch.setattr("app.agents.catalog.router.get_qdrant_client", _fake_get_qdrant_client)
 
     request = HomologateRequest(article="xyznonexistent", warehouse_id=uuid.uuid4())
-    result = await homologate(request, session=_FakeSession(rows=[]), _operator=None)
+    session = _FakeSession(responses=[_FakeResultRows([])])  # fuzzy names query; no matches -> no enrichment
+    result = await homologate(request, session=session, _operator=None)
 
     assert result.sin_homologar is True
     assert result.oracle_code is None

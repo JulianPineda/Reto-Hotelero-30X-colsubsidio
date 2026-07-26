@@ -78,7 +78,7 @@ def _events_of_type(session: _FakeSession, event_type: EventType):
 
 async def test_reject_marks_not_approved():
     item = _make_item()
-    count_session = SimpleNamespace(warehouse_id=uuid.uuid4())
+    count_session = SimpleNamespace(warehouse_id=uuid.uuid4(), status="pending_review")
     session = _FakeSession(items={item.id: item}, count_sessions={item.session_id: count_session})
 
     response = await supervisor.reject_item(
@@ -97,7 +97,7 @@ async def test_reject_marks_not_approved():
 
 async def test_approve_with_correction_updates_quantity():
     item = _make_item()
-    count_session = SimpleNamespace(warehouse_id=uuid.uuid4())
+    count_session = SimpleNamespace(warehouse_id=uuid.uuid4(), status="pending_review")
     session = _FakeSession(items={item.id: item}, count_sessions={item.session_id: count_session})
 
     response = await supervisor.approve_item(
@@ -112,7 +112,7 @@ async def test_approve_with_correction_updates_quantity():
 
 async def test_approve_without_correction_accepts_dictated_quantity():
     item = _make_item()
-    count_session = SimpleNamespace(warehouse_id=uuid.uuid4())
+    count_session = SimpleNamespace(warehouse_id=uuid.uuid4(), status="pending_review")
     session = _FakeSession(items={item.id: item}, count_sessions={item.session_id: count_session})
 
     await supervisor.approve_item(
@@ -131,7 +131,7 @@ async def test_bulk_approve_emits_events():
         item = _make_item(session_id=session_id)
         items[item.id] = item
 
-    count_session = SimpleNamespace(warehouse_id=warehouse_id)
+    count_session = SimpleNamespace(warehouse_id=warehouse_id, status="pending_review")
     session = _FakeSession(items=items, count_sessions={session_id: count_session})
 
     request = supervisor.BulkApproveRequest(item_ids=list(items.keys()))
@@ -151,7 +151,7 @@ async def test_bulk_approve_skips_items_from_other_sessions():
 
     session = _FakeSession(
         items={item_in_session.id: item_in_session, item_in_other_session.id: item_in_other_session},
-        count_sessions={session_id: SimpleNamespace(warehouse_id=uuid.uuid4())},
+        count_sessions={session_id: SimpleNamespace(warehouse_id=uuid.uuid4(), status="pending_review")},
     )
 
     request = supervisor.BulkApproveRequest(item_ids=[item_in_session.id, item_in_other_session.id])

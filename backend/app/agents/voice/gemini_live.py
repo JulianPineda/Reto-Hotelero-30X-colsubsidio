@@ -50,6 +50,26 @@ capability gap in the provider ADR-001 chose. `TranscriptEvent.confidence`
 is always None here; `voice/session.py`'s threshold check against it needs
 a product decision (see the summary sent alongside the original fix).
 
+PTT HANGS FOREVER WITH AUTOMATIC VAD (confirmed 2026-07-25, live, via a real
+browser holding the VoiceButton with a synthetic mic input): `handle_ptt_stop()`
+(session.py) waits on `receive()` for a FINAL transcript event, which only
+gets pushed when Gemini's `turn_complete` fires. With `automatic_activity_
+detection` (silence-based VAD) enabled, `turn_complete` depends on Gemini
+observing a gap of silence *within a continuing audio stream*. But a real
+PTT flow doesn't produce that: the moment the operator releases the button,
+`audioCapture.ts` stops the mic entirely — no more chunks, silent or
+otherwise, ever arrive. Gemini has nothing to notice a "gap" in, so
+automatic VAD's end-of-turn condition can go unmet indefinitely (confirmed:
+a live PTT cycle hung >20s with zero server response, while a raw diagnostic
+that kept the stream open and fed trailing silence chunks got `turn_complete`
+in a couple of seconds — the difference was the continued stream, not
+anything about the audio content). Fixed by disabling automatic VAD
+(`AutomaticActivityDetection(disabled=True)`) and driving turn boundaries
+explicitly instead: `start_of_speech()`/`end_of_speech()` send `activity_
+start`/`activity_end`, called from `session.py`'s `handle_ptt_start`/
+`handle_ptt_stop` — PTT already knows exactly when speech starts and stops,
+so there's no reason to make Gemini guess.
+
 AUDIO-LESS TURN FLAKINESS (confirmed 2026-07-25, root-caused with a real
 billed key): `speak()` initially appeared to never deliver audio through
 `receive_audio()`. Bypassing this class entirely with a raw diagnostic
@@ -90,11 +110,20 @@ _SPEAK_TURN_TIMEOUT_SECONDS = 8.0
 # adapted from used a conversational persona, which is wrong for our use
 # case: the operator needs to hear exactly the digit-by-digit confirmation
 # text, not Gemini's own improvised reply to it.
+#
+# DELIBERATELY SHORT (confirmed empirically 2026-07-25): a longer, more
+# heavily-qualified version of this instruction ("de forma clara y natural,
+# EXACTAMENTE como te lo dan — sin agregar saludos, comentarios, preguntas
+# ni interpretación propia. No converses...") measurably made the model
+# skip audio synthesis and return only a text transcription — a controlled
+# A/B (3 short vs. 3 long, interleaved, same turn text) showed the long
+# version failing to produce audio in 2/3 turns vs. 0/3 for this shorter
+# one, and 5/5 clean runs with this exact wording. Keep this short; treat
+# any future edit to it as a change that needs the same kind of empirical
+# re-verification, not just a read-through.
 TTS_SYSTEM_INSTRUCTION = (
-    "Cuando recibas un mensaje de texto, léelo en voz alta de forma clara y "
-    "natural, EXACTAMENTE como te lo dan — sin agregar saludos, comentarios, "
-    "preguntas ni interpretación propia. No converses. Tu único trabajo es "
-    "la lectura en voz alta de confirmaciones de conteo de inventario."
+    "Lee en voz alta, exactamente como te lo dan, el siguiente mensaje. "
+    "No respondas ni agregues nada mas."
 )
 
 
@@ -118,13 +147,12 @@ class GeminiLiveSTTProvider(STTProvider):
             speech_config=types.SpeechConfig(
                 language_code=session_config.language_code,
             ),
+            # Automatic VAD is disabled — see "PTT HANGS FOREVER" in the
+            # module docstring. `session.py`'s handle_ptt_start/handle_ptt_stop
+            # drive turn boundaries explicitly via start_of_speech()/
+            # end_of_speech() below instead.
             realtime_input_config=types.RealtimeInputConfig(
-                automatic_activity_detection=types.AutomaticActivityDetection(
-                    start_of_speech_sensitivity="START_SENSITIVITY_LOW",
-                    end_of_speech_sensitivity="END_SENSITIVITY_LOW",
-                    silence_duration_ms=600,
-                    prefix_padding_ms=300,
-                ),
+                automatic_activity_detection=types.AutomaticActivityDetection(disabled=True),
             ),
             # Required or the server never sends input_transcription at all.
             input_audio_transcription=types.AudioTranscriptionConfig(),
@@ -170,12 +198,22 @@ class GeminiLiveSTTProvider(STTProvider):
         finally:
             await self._transcript_queue.put(None)
 
+    async def start_of_speech(self) -> None:
+        if self._session is None:
+            raise RuntimeError("call connect() before start_of_speech()")
+        await self._session.send_realtime_input(activity_start=types.ActivityStart())
+
     async def send_audio(self, chunk: bytes) -> None:
         if self._session is None:
             raise RuntimeError("call connect() before send_audio()")
         await self._session.send_realtime_input(
             audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
         )
+
+    async def end_of_speech(self) -> None:
+        if self._session is None:
+            raise RuntimeError("call connect() before end_of_speech()")
+        await self._session.send_realtime_input(activity_end=types.ActivityEnd())
 
     async def speak(self, text: str) -> None:
         """Sends `text` as a turn for Gemini to read aloud. Retries the same

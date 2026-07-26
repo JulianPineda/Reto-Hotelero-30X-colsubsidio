@@ -9,6 +9,19 @@ import {
   type SyncContext,
 } from './offlineSync';
 
+function mockUnauthorizedFetch(unauthorizedPath: string) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith(unauthorizedPath)) {
+        return { ok: false, status: 401, json: async () => ({ detail: { error: 'TOKEN_EXPIRED' } }) };
+      }
+      throw new Error(`Unhandled fetch: ${url}`);
+    }),
+  );
+}
+
 const ctx: SyncContext = {
   apiBaseUrl: 'http://api.test/api/v1',
   authToken: 'token-123',
@@ -364,5 +377,25 @@ describe('submitManualFallbackItem', () => {
     ).rejects.toThrow(PersistCountItemError);
 
     expect(useSessionStore.getState().items).toHaveLength(0);
+  });
+
+  it('redirects to /select and stops instead of parsing a 401 as data', async () => {
+    const originalLocation = window.location;
+    // jsdom throws "Not implemented: navigation" on a real `href` assignment —
+    // stub `location` with a writable object so redirectToLogin() is observable.
+    Object.defineProperty(window, 'location', { value: { href: '' }, writable: true });
+    mockUnauthorizedFetch('/agents/homologate');
+
+    await expect(
+      submitManualFallbackItem(
+        { sessionId: 'session-1', article: 'Harina', quantity: 20, unit: 'kg', expiryDate: null },
+        ctx,
+      ),
+    ).rejects.toThrow('UNAUTHORIZED');
+
+    expect(window.location.href).toBe('/select');
+    expect(useSessionStore.getState().items).toHaveLength(0);
+
+    Object.defineProperty(window, 'location', { value: originalLocation, writable: true });
   });
 });

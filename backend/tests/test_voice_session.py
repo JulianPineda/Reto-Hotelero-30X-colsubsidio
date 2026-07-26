@@ -16,12 +16,20 @@ class FakeSTTProvider(STTProvider):
         self.sent_chunks: list[bytes] = []
         self.disconnected = False
         self.spoken_texts: list[str] = []
+        self.speech_started = False
+        self.speech_ended = False
 
     async def connect(self, session_config: SessionConfig) -> None:
         self.connected = True
 
+    async def start_of_speech(self) -> None:
+        self.speech_started = True
+
     async def send_audio(self, chunk: bytes) -> None:
         self.sent_chunks.append(chunk)
+
+    async def end_of_speech(self) -> None:
+        self.speech_ended = True
 
     async def speak(self, text: str) -> None:
         self.spoken_texts.append(text)
@@ -51,6 +59,29 @@ async def test_ptt_start_transitions_to_listening_and_connects():
     assert response == {"type": "listening"}
     assert session.state == VoiceState.LISTENING
     assert stt.connected is True
+
+
+async def test_ptt_start_signals_start_of_speech():
+    """PTT already knows exactly when the user starts talking — Gemini
+    Live's automatic (silence-based) VAD never gets a chance to notice
+    since mic capture stops instantly on release, so this must be driven
+    explicitly (see gemini_live.py's "PTT HANGS FOREVER" docstring)."""
+    stt = FakeSTTProvider(events=[])
+    session = VoicePTTSession(stt_provider=stt, session_config=_session_config())
+
+    await session.handle_ptt_start()
+
+    assert stt.speech_started is True
+
+
+async def test_ptt_stop_signals_end_of_speech_before_waiting_for_transcript():
+    stt = FakeSTTProvider(events=[TranscriptEvent(type=TranscriptEventType.FINAL, text="veinte kilos", confidence=None)])
+    session = VoicePTTSession(stt_provider=stt, session_config=_session_config())
+    await session.handle_ptt_start()
+
+    await session.handle_ptt_stop()
+
+    assert stt.speech_ended is True
 
 
 async def test_audio_chunk_forwarded_only_while_listening():

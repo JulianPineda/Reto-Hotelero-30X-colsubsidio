@@ -20,6 +20,45 @@ from app.services.catalog_sync import get_qdrant_client
 router = APIRouter(prefix="/agents", tags=["catalog"])
 
 
+async def _enrich_with_canonical_fields(
+    session: AsyncSession, matches: list[dict]
+) -> list[dict]:
+    """Overwrites each match's `name`/`unit`/`is_perishable` with the
+    canonical `catalog_items` row for its `oracle_code` — Postgres, not
+    Qdrant, is the source of truth for these fields.
+
+    Without this, a match against a learned-synonym point (T-010,
+    `catalog_sync.upsert_synonym`) or a fuzzy_fallback match returns the raw
+    synonym text as `name` and `unit`/`is_perishable` as `None` (neither is
+    stored in a synonym point's payload). Confirmed live: homologating a
+    synonym after teaching it back returned `name` = the operator's own raw
+    phrase instead of the catalog item's real name — cosmetically wrong, but
+    `is_perishable=None` is a real CLAUDE.md §3.6 violation, since a
+    perishable item matched this way would silently skip the mandatory
+    expiry_date requirement (`None` is falsy, same as "not perishable").
+    """
+    oracle_codes = {m["oracle_code"] for m in matches}
+    rows = (
+        await session.execute(
+            select(CatalogItem).where(CatalogItem.oracle_code.in_(oracle_codes))
+        )
+    ).scalars()
+    canonical = {item.oracle_code: item for item in rows}
+
+    enriched = []
+    for match in matches:
+        item = canonical.get(match["oracle_code"])
+        enriched.append(
+            {
+                **match,
+                "name": item.name if item is not None else match["name"],
+                "unit": item.unit if item is not None else match["unit"],
+                "is_perishable": item.is_perishable if item is not None else match["is_perishable"],
+            }
+        )
+    return enriched
+
+
 async def run_homologation(
     session: AsyncSession, client: AsyncQdrantClient, article: str
 ) -> HomologateResult:
@@ -37,6 +76,9 @@ async def run_homologation(
         if fuzzy_matches:
             matches = fuzzy_matches
             match_method = "fuzzy_fallback"
+
+    if matches:
+        matches = await _enrich_with_canonical_fields(session, matches)
 
     return searcher.classify(matches, match_method)
 
