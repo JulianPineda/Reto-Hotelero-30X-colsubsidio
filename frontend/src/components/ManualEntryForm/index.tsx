@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { CANONICAL_UNITS } from '../../services/unitCompatibility';
 import { colors, radius, touchTargets, typography } from '../../theme';
 
 export interface ManualEntryValues {
@@ -109,14 +110,27 @@ export function ManualEntryForm({ onSubmit }: ManualEntryFormProps) {
           <label htmlFor="manual-unit" style={labelStyle}>
             Unidad
           </label>
-          <input
+          {/* Constrained to the canonical vocabulary (unit_normalizer.py)
+              instead of free text — the article isn't homologated yet at
+              capture time (offline, or online-fallback before Catalog
+              Agent runs), so the backend is still the one that rejects an
+              incompatible unit for the eventual matched product; this just
+              stops "kilo", "klg", "Kg." typos from ever reaching it. */}
+          <select
             id="manual-unit"
-            type="text"
             value={unit}
             onChange={(event) => setUnit(event.target.value)}
-            maxLength={20}
             style={inputStyle}
-          />
+          >
+            <option value="" disabled>
+              Selecciona una unidad
+            </option>
+            {CANONICAL_UNITS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 

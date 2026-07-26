@@ -82,7 +82,7 @@ describe('Login', () => {
     expect(screen.queryByLabelText(/bodega/i)).not.toBeInTheDocument();
   });
 
-  it('restores the right module directly from a stored session (e.g. after BackToMenuButton remounts Login)', async () => {
+  it('restores the right module directly from a stored session (e.g. after the ribbon\'s Inicio action remounts Login)', async () => {
     sessionStorage.setItem('piscilago_auth_token', 'token-from-earlier');
     sessionStorage.setItem('piscilago_auth_role', 'operator');
     mockFetchByPath({

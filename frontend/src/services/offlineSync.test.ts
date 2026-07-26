@@ -151,6 +151,80 @@ describe('syncOfflineQueue', () => {
     expect(await listNeedsReviewItems(sessionId)).toHaveLength(1);
   });
 
+  it('parks a unit-mismatch item as needs_review instead of aborting the whole sync', async () => {
+    const sessionId = uniqueSessionId();
+    // Two items queued — a wrong-unit one first, and a normal one behind
+    // it. Before this fix, an uncaught throw from the first item's
+    // finalizeItem() would abort the loop and leave the second unsynced too.
+    await enqueueOfflineItem({ sessionId, article: 'Leche', quantity: 2, unit: 'kg', expiryDate: null });
+    await enqueueOfflineItem({ sessionId, article: 'Harina', quantity: 20, unit: 'kg', expiryDate: null });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/agents/homologate')) {
+          const body = JSON.parse(init!.body as string);
+          if (body.article === 'Leche') {
+            return {
+              ok: true,
+              json: async () => ({
+                oracle_code: 'LAC-001',
+                name: 'Leche Entera 1L',
+                unit: 'L',
+                score: 0.9,
+                is_perishable: false,
+                match_method: 'vector_search',
+                alternatives: [],
+                requires_operator_selection: false,
+                sin_homologar: false,
+              }),
+            };
+          }
+          return {
+            ok: true,
+            json: async () => ({
+              oracle_code: 'HAR-001',
+              name: 'Harina de Trigo Especial 50kg',
+              unit: 'kg',
+              score: 0.94,
+              is_perishable: false,
+              match_method: 'vector_search',
+              alternatives: [],
+              requires_operator_selection: false,
+              sin_homologar: false,
+            }),
+          };
+        }
+        if (url.endsWith('/count-items')) {
+          const body = JSON.parse(init!.body as string);
+          if (body.oracle_code === 'LAC-001') {
+            return { ok: false, json: async () => ({ detail: { error: 'UNIT_MISMATCH', message: 'nope' } }) };
+          }
+          return {
+            ok: true,
+            json: async () => ({
+              item_id: 'persisted-4',
+              sequence_in_session: 1,
+              is_flagged: false,
+              flag_type: null,
+              flag_reason: null,
+              traffic_light: null,
+            }),
+          };
+        }
+        throw new Error(`Unhandled fetch: ${url}`);
+      }),
+    );
+
+    await syncOfflineQueue(sessionId, ctx);
+
+    expect(await listNeedsReviewItems(sessionId)).toHaveLength(1);
+    const items = useSessionStore.getState().items;
+    expect(items).toHaveLength(1);
+    expect(items[0].id).toBe('persisted-4');
+  });
+
   it('persists a sin_homologar item directly with no oracle_code', async () => {
     const sessionId = uniqueSessionId();
     await enqueueOfflineItem({ sessionId, article: 'xyz', quantity: 1, unit: 'unit', expiryDate: null });
@@ -245,6 +319,73 @@ describe('resolveNeedsReviewItem', () => {
       articleName: 'Harina A',
       isOffline: true,
     });
+  });
+
+  it('applies a unitOverride when resolving a unit-mismatch item', async () => {
+    const sessionId = uniqueSessionId();
+    await enqueueOfflineItem({ sessionId, article: 'Leche', quantity: 2, unit: 'kg', expiryDate: null });
+
+    let capturedBody: Record<string, unknown> | null = null;
+    let countItemsCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/agents/homologate')) {
+          return {
+            ok: true,
+            json: async () => ({
+              oracle_code: 'LAC-001',
+              name: 'Leche Entera 1L',
+              unit: 'L',
+              score: 0.9,
+              is_perishable: false,
+              match_method: 'vector_search',
+              alternatives: [],
+              requires_operator_selection: false,
+              sin_homologar: false,
+            }),
+          };
+        }
+        if (url.endsWith('/count-items')) {
+          countItemsCalls += 1;
+          // First call (during syncOfflineQueue, still carrying the wrong
+          // "kg" unit) is rejected so the item parks as needs_review; the
+          // second call (via resolveNeedsReviewItem with unitOverride='L')
+          // succeeds.
+          if (countItemsCalls === 1) {
+            return { ok: false, json: async () => ({ detail: { error: 'UNIT_MISMATCH', message: 'nope' } }) };
+          }
+          capturedBody = JSON.parse(init!.body as string);
+          return {
+            ok: true,
+            json: async () => ({
+              item_id: 'persisted-5',
+              sequence_in_session: 1,
+              is_flagged: false,
+              flag_type: null,
+              flag_reason: null,
+              traffic_light: null,
+            }),
+          };
+        }
+        throw new Error(`Unhandled fetch: ${url}`);
+      }),
+    );
+
+    await syncOfflineQueue(sessionId, ctx);
+    const [entry] = await listNeedsReviewItems(sessionId);
+
+    await resolveNeedsReviewItem(
+      entry,
+      { oracleCode: 'LAC-001', name: 'Leche Entera 1L', isPerishable: false },
+      ctx,
+      undefined,
+      'L',
+    );
+
+    expect(capturedBody).toMatchObject({ unit: 'L' });
+    expect(await listNeedsReviewItems(sessionId)).toHaveLength(0);
   });
 });
 

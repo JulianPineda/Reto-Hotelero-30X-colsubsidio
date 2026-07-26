@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { colors, radius, shadow } from '../../theme';
-import { BackToMenuButton } from '../../components/BackToMenuButton';
+import { BrandRibbon } from '../../components/BrandRibbon';
 import type { FlagType } from '../../components/FlagBadge';
-import { headerPrimaryButtonStyle, PageHeader } from '../../components/PageHeader';
+import { ExportIcon, HomeIcon } from '../../components/icons';
+import { OptionsRibbon, type RibbonAction } from '../../components/OptionsRibbon';
 import type { TrafficLightColor } from '../../components/TrafficLight';
 import { handleUnauthorized } from '../../services/apiClient';
 import { BulkActionBar } from './BulkActionBar';
@@ -55,6 +57,7 @@ export function SupervisorDashboard({
   apiBaseUrl,
   authToken,
 }: SupervisorDashboardProps) {
+  const navigate = useNavigate();
   const [items, setItems] = useState<FlaggedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -160,7 +163,15 @@ export function SupervisorDashboard({
       }
       if (!downloadUrl) throw new Error('export_timeout');
 
-      const fileResponse = await fetch(`${apiBaseUrl}${downloadUrl}`, { headers: authHeaders });
+      // `download_url` from the backend is already a full "/api/v1/..."
+      // path (api-contracts.md's documented contract — see
+      // exporter/router.py), not a bare filename relative to `apiBaseUrl`.
+      // Concatenating apiBaseUrl (which itself ends in "/api/v1") directly
+      // in front of it double-prepended the prefix — confirmed live as a
+      // 404 on ".../api/v1/api/v1/exports/....xlsx". Strip apiBaseUrl back
+      // to just the origin first.
+      const apiOrigin = apiBaseUrl.replace(/\/api\/v1\/?$/, '');
+      const fileResponse = await fetch(`${apiOrigin}${downloadUrl}`, { headers: authHeaders });
       if (!fileResponse.ok) throw new Error('download_failed');
       const blob = await fileResponse.blob();
       const objectUrl = URL.createObjectURL(blob);
@@ -179,19 +190,25 @@ export function SupervisorDashboard({
     }
   };
 
+  const ribbonActions: RibbonAction[] = [
+    { key: 'inicio', label: 'Inicio', icon: <HomeIcon />, onClick: () => navigate('/') },
+    {
+      key: 'exportar',
+      label: exporting ? 'Exportando…' : 'Exportar a Excel',
+      icon: <ExportIcon />,
+      onClick: handleExport,
+      disabled: exporting,
+      variant: 'primary',
+    },
+  ];
+
   return (
     <div style={{ minHeight: '100vh' }}>
-      <PageHeader
+      <BrandRibbon />
+      <OptionsRibbon
         title={`Supervisor — Bodega ${warehouseCode}`}
         subtitle={`Turno ${shiftLabel}`}
-        actions={
-          <>
-            <BackToMenuButton variant="onDark" />
-            <button type="button" onClick={handleExport} disabled={exporting} style={headerPrimaryButtonStyle(!exporting)}>
-              {exporting ? 'Exportando…' : 'Exportar a Excel'}
-            </button>
-          </>
-        }
+        actions={ribbonActions}
       />
 
       <div style={{ maxWidth: 960, margin: '0 auto', padding: '24px 16px' }}>

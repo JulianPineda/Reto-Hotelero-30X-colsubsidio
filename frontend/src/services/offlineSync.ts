@@ -175,7 +175,21 @@ export async function syncOfflineQueue(sessionId: string, ctx: SyncContext): Pro
       continue;
     }
 
-    await finalizeItem(entry, homologation, ctx);
+    try {
+      await finalizeItem(entry, homologation, ctx);
+    } catch (err) {
+      // A wrong unit for the matched product (new rule: sólidos/al peso
+      // vs. líquidos) — the backend is the one that actually rejects it
+      // (services/unit_compatibility.py), caught here the same way
+      // ambiguous homologation/missing-expiry are: parked for the operator
+      // to fix in OfflineReviewList instead of losing the count or, worse,
+      // aborting the sync loop for every item still queued behind it.
+      if (err instanceof PersistCountItemError && err.errorCode === 'UNIT_MISMATCH') {
+        await markItemStatus(entry.id!, 'needs_review');
+        continue;
+      }
+      throw err;
+    }
   }
 }
 
@@ -191,15 +205,23 @@ export interface ReviewChoice {
  * `expiryDateOverride` covers the other reason an item can land in review:
  * homologation already succeeded, but the perishable item was missing its
  * expiry date — in that case `choice` still carries the already-known
- * oracle_code/name from the earlier homologate() call.
+ * oracle_code/name from the earlier homologate() call. `unitOverride`
+ * covers a third reason: the dictated unit was incompatible with the
+ * matched product's dimension (sólido/al peso vs. líquido) — the operator
+ * picks a compatible one in `OfflineReviewList` instead of redictating.
  */
 export async function resolveNeedsReviewItem(
   entry: OfflineCountItem,
   choice: ReviewChoice,
   ctx: SyncContext,
   expiryDateOverride?: string,
+  unitOverride?: string,
 ): Promise<void> {
-  const effectiveEntry = expiryDateOverride ? { ...entry, expiryDate: expiryDateOverride } : entry;
+  const effectiveEntry = {
+    ...entry,
+    ...(expiryDateOverride ? { expiryDate: expiryDateOverride } : {}),
+    ...(unitOverride ? { unit: unitOverride } : {}),
+  };
 
   await finalizeItem(
     effectiveEntry,

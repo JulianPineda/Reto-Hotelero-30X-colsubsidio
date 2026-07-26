@@ -27,8 +27,8 @@ const TOKEN_KEY = 'piscilago_auth_token';
 const ROLE_KEY = 'piscilago_auth_role';
 
 /** sessionStorage, not localStorage — a shared tablet shouldn't stay
- * logged in as the same operator across an actual browser restart, but
- * "back to menu" (BackToMenuButton) shouldn't force a re-login either. */
+ * logged in as the same operator across an actual browser restart, but the
+ * ribbon's "Inicio" action (navigate('/')) shouldn't force a re-login either. */
 export function storeSession(token: string, role: Role): void {
   sessionStorage.setItem(TOKEN_KEY, token);
   sessionStorage.setItem(ROLE_KEY, role);

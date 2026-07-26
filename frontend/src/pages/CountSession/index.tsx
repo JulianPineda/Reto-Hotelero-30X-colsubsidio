@@ -216,34 +216,50 @@ export function CountSession({
 
   const dialogsBlockVoice = uiState.phase === 'confirming' || uiState.phase === 'confirming_expiry_date';
 
+  const ribbonActions: RibbonAction[] = [
+    { key: 'inicio', label: 'Inicio', icon: <HomeIcon />, onClick: () => navigate('/') },
+    ...(!sessionCompleted
+      ? [
+          {
+            key: 'finalizar',
+            label: completing ? 'Finalizando…' : 'Finalizar inventario',
+            icon: <CheckCircleIcon />,
+            onClick: handleCompleteSession,
+            disabled: completing || isOffline,
+            variant: 'primary' as const,
+          },
+        ]
+      : [
+          {
+            key: 'exportar',
+            label: 'Exportar',
+            icon: <ExportIcon />,
+            onClick: () => setShowExportHandoffNote(true),
+            variant: 'primary' as const,
+          },
+        ]),
+  ];
+
   return (
     <div style={{ minHeight: '100vh', fontFamily: typography.fontFamily }}>
       <OfflineBanner isOffline={isOffline} />
 
       <div style={{ paddingTop: isOffline ? 40 : 0 }}>
-        <PageHeader
+        <BrandRibbon />
+        <OptionsRibbon
           title={`Conteo de Bodega — ${warehouseCode}`}
           subtitle={`Turno ${shiftLabel}`}
-          actions={
-            <>
-              <BackToMenuButton variant="onDark" />
-              {!sessionCompleted && (
-                <button
-                  type="button"
-                  onClick={handleCompleteSession}
-                  disabled={completing || isOffline}
-                  style={headerPrimaryButtonStyle(!completing && !isOffline)}
-                >
-                  {completing ? 'Finalizando…' : 'Terminar inventario'}
-                </button>
-              )}
-            </>
-          }
+          actions={ribbonActions}
         />
       </div>
 
       <div style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px' }}>
         {completeError && <p style={{ color: colors.ui.error }}>{completeError}</p>}
+        {showExportHandoffNote && (
+          <p role="status" style={{ color: colors.ui.textSecondary, background: colors.ui.surface, padding: '12px 16px', borderRadius: radius.small }}>
+            La exportación a Excel la genera el supervisor desde su panel, una vez que revise los ítems marcados de esta sesión.
+          </p>
+        )}
 
         {sessionCompleted ? (
           <p

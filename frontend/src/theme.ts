@@ -72,8 +72,8 @@ export const shadow = {
   high: '0 8px 28px rgba(26, 26, 46, 0.16)',
 } as const;
 
-// Brand-blue gradient — the shared header bar (PageHeader) and Login's
-// card both anchor on this rather than a flat colors.primary.blue fill.
+// Brand-blue gradient — BrandRibbon anchors on this rather than a flat
+// colors.primary.blue fill.
 export const gradients = {
   brandBlue: `linear-gradient(135deg, ${colors.primary.blue} 0%, #005a99 100%)`,
 } as const;

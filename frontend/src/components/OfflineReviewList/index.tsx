@@ -2,11 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { listNeedsReviewItems, type OfflineCountItem } from '../../services/offlineQueue';
 import {
   callHomologate,
+  PersistCountItemError,
   resolveNeedsReviewItem,
   type HomologateAlternative,
   type HomologateResponse,
   type SyncContext,
 } from '../../services/offlineSync';
+import { compatibleUnitsFor, isUnitCompatible } from '../../services/unitCompatibility';
 import { colors, radius, shadow, touchTargets, typography } from '../../theme';
 
 export interface OfflineReviewListProps {
@@ -26,6 +28,16 @@ export function OfflineReviewList({ sessionId, ctx, refreshKey }: OfflineReviewL
   const [items, setItems] = useState<OfflineCountItem[]>([]);
   const [homologations, setHomologations] = useState<Record<number, HomologateResponse>>({});
   const [expiryDrafts, setExpiryDrafts] = useState<Record<number, string>>({});
+  const [unitDrafts, setUnitDrafts] = useState<Record<number, string>>({});
+  const [resolveError, setResolveError] = useState<string | null>(null);
+
+  /** An item can (rarely) need both an expiry date AND a unit fix — draft
+   * state carries a fix forward across a reload even if the resolve
+   * attempt failed on the OTHER requirement, so fixing one then the other
+   * converges instead of looping (Dexie's stored `item.expiryDate`/`unit`
+   * are only updated once the persist actually succeeds). */
+  const effectiveExpiryDate = (item: OfflineCountItem): string | null =>
+    expiryDrafts[item.id as number] || item.expiryDate;
 
   const reload = useCallback(async () => {
     const needsReview = await listNeedsReviewItems(sessionId);
@@ -43,25 +55,69 @@ export function OfflineReviewList({ sessionId, ctx, refreshKey }: OfflineReviewL
   }, [reload, refreshKey]);
 
   const handlePickAlternative = async (item: OfflineCountItem, alt: HomologateAlternative) => {
-    await resolveNeedsReviewItem(item, { oracleCode: alt.oracle_code, name: alt.name, isPerishable: null }, ctx);
-    await reload();
+    setResolveError(null);
+    try {
+      await resolveNeedsReviewItem(item, { oracleCode: alt.oracle_code, name: alt.name, isPerishable: null }, ctx);
+      await reload();
+    } catch {
+      setResolveError('No se pudo guardar el ítem. Intenta de nuevo.');
+    }
   };
 
   const handleSaveWithoutMatch = async (item: OfflineCountItem) => {
-    await resolveNeedsReviewItem(item, { oracleCode: null, name: null, isPerishable: null }, ctx);
-    await reload();
+    setResolveError(null);
+    try {
+      await resolveNeedsReviewItem(item, { oracleCode: null, name: null, isPerishable: null }, ctx);
+      await reload();
+    } catch {
+      setResolveError('No se pudo guardar el ítem. Intenta de nuevo.');
+    }
   };
 
   const handleConfirmExpiry = async (item: OfflineCountItem, homologation: HomologateResponse) => {
     const draft = expiryDrafts[item.id as number];
     if (!draft) return;
-    await resolveNeedsReviewItem(
-      item,
-      { oracleCode: homologation.oracle_code, name: homologation.name, isPerishable: homologation.is_perishable },
-      ctx,
-      draft,
-    );
-    await reload();
+    setResolveError(null);
+    try {
+      await resolveNeedsReviewItem(
+        item,
+        { oracleCode: homologation.oracle_code, name: homologation.name, isPerishable: homologation.is_perishable },
+        ctx,
+        draft,
+        unitDrafts[item.id as number],
+      );
+      await reload();
+    } catch (err) {
+      if (err instanceof PersistCountItemError && err.errorCode === 'UNIT_MISMATCH') {
+        setResolveError(
+          `"${homologation.name}" también tiene una unidad incompatible — elige la unidad correcta abajo.`,
+        );
+      } else {
+        setResolveError('No se pudo guardar el ítem. Intenta de nuevo.');
+      }
+    }
+  };
+
+  const handleConfirmUnit = async (item: OfflineCountItem, homologation: HomologateResponse) => {
+    const draft = unitDrafts[item.id as number];
+    if (!draft) return;
+    setResolveError(null);
+    try {
+      await resolveNeedsReviewItem(
+        item,
+        { oracleCode: homologation.oracle_code, name: homologation.name, isPerishable: homologation.is_perishable },
+        ctx,
+        effectiveExpiryDate(item) ?? undefined,
+        draft,
+      );
+      await reload();
+    } catch (err) {
+      if (err instanceof PersistCountItemError && err.errorCode === 'EXPIRY_DATE_REQUIRED') {
+        setResolveError(`"${homologation.name}" también requiere fecha de vencimiento — agrégala abajo.`);
+      } else {
+        setResolveError('No se pudo guardar el ítem. Intenta de nuevo.');
+      }
+    }
   };
 
   if (items.length === 0) return null;
@@ -69,6 +125,7 @@ export function OfflineReviewList({ sessionId, ctx, refreshKey }: OfflineReviewL
   return (
     <div style={{ marginTop: 32, fontFamily: typography.fontFamily }}>
       <h2 style={{ color: colors.primary.blue }}>Ítems offline que requieren tu revisión ({items.length})</h2>
+      {resolveError && <p style={{ color: colors.ui.error }}>{resolveError}</p>}
       <ul style={{ listStyle: 'none', padding: 0 }}>
         {items.map((item) => {
           const homologation = homologations[item.id as number];
@@ -130,7 +187,54 @@ export function OfflineReviewList({ sessionId, ctx, refreshKey }: OfflineReviewL
                 </>
               )}
 
-              {homologation && !homologation.requires_operator_selection && homologation.is_perishable && !item.expiryDate && (
+              {homologation &&
+                !homologation.requires_operator_selection &&
+                !(homologation.is_perishable && !effectiveExpiryDate(item)) &&
+                !isUnitCompatible(homologation.unit, item.unit) && (
+                  <>
+                    <p style={{ color: colors.ui.textSecondary }}>
+                      &quot;{homologation.name}&quot; no admite la unidad &quot;{item.unit}&quot; — elige una
+                      unidad compatible:
+                    </p>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <select
+                        aria-label="Unidad corregida"
+                        value={unitDrafts[item.id as number] ?? ''}
+                        onChange={(event) =>
+                          setUnitDrafts((prev) => ({ ...prev, [item.id as number]: event.target.value }))
+                        }
+                        style={{ minHeight: touchTargets.minimum, flex: 1 }}
+                      >
+                        <option value="" disabled>
+                          Selecciona una unidad
+                        </option>
+                        {compatibleUnitsFor(homologation.unit).map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => handleConfirmUnit(item, homologation)}
+                        disabled={!unitDrafts[item.id as number]}
+                        style={{
+                          minHeight: touchTargets.minimum,
+                          background: colors.ui.success,
+                          color: '#ffffff',
+                          border: 'none',
+                          borderRadius: 8,
+                          padding: '0 16px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Confirmar
+                      </button>
+                    </div>
+                  </>
+                )}
+
+              {homologation && !homologation.requires_operator_selection && homologation.is_perishable && !effectiveExpiryDate(item) && (
                 <>
                   <p style={{ color: colors.ui.textSecondary }}>
                     &quot;{homologation.name}&quot; es perecedero — indica su fecha de vencimiento:
