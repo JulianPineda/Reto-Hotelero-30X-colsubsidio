@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { colors, touchTargets, typography } from '../../theme';
+import { colors, radius, touchTargets, typography } from '../../theme';
 
 export interface ManualEntryValues {
   article: string;
@@ -20,7 +20,7 @@ const inputStyle = {
   fontFamily: typography.fontFamily,
   padding: '8px 12px',
   border: `1px solid ${colors.ui.border}`,
-  borderRadius: 8,
+  borderRadius: radius.small,
   width: '100%',
   boxSizing: 'border-box' as const,
 };
@@ -138,12 +138,12 @@ export function ManualEntryForm({ onSubmit }: ManualEntryFormProps) {
         disabled={!canSubmit}
         style={{
           minHeight: touchTargets.minimum,
-          background: canSubmit ? colors.primary.blue : colors.neutral.grafito40,
-          color: '#ffffff',
+          background: canSubmit ? colors.primary.yellow : colors.neutral.grafito40,
+          color: canSubmit ? colors.ui.textPrimary : '#ffffff',
           border: 'none',
-          borderRadius: 8,
+          borderRadius: radius.small,
           fontSize: typography.sizes.base,
-          fontWeight: 600,
+          fontWeight: 700,
           cursor: canSubmit ? 'pointer' : 'not-allowed',
         }}
       >

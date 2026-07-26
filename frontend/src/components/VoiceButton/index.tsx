@@ -49,6 +49,7 @@ export function VoiceButton({ phase, onPressStart, onPressEnd }: VoiceButtonProp
       type="button"
       aria-label={PHASE_LABELS[phase]}
       disabled={phase === 'disabled'}
+      className={phase === 'listening' ? 'voice-button-listening' : undefined}
       onMouseDown={handleStart}
       onMouseUp={handleEnd}
       onMouseLeave={handleEnd}
@@ -76,7 +77,7 @@ export function VoiceButton({ phase, onPressStart, onPressEnd }: VoiceButtonProp
         justifyContent: 'center',
         textAlign: 'center',
         padding: 8,
-        boxShadow: phase === 'listening' ? `0 0 0 8px ${colors.primary.yellow}33` : 'none',
+        boxShadow: phase === 'listening' ? `0 0 0 8px ${colors.primary.yellow}33` : '0 4px 14px rgba(0, 103, 177, 0.2)',
         userSelect: 'none',
       }}
     >

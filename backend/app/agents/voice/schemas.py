@@ -26,5 +26,6 @@ class TranscriptEvent(BaseModel):
 
 class OperatorClaims(BaseModel):
     operator_id: str
+    role: str = "operator"  # default keeps old tokens issued before roles existed from hard-failing
     warehouse_id: UUID | None = None
     exp: int | None = None

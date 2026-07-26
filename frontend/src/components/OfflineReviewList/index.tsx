@@ -7,7 +7,7 @@ import {
   type HomologateResponse,
   type SyncContext,
 } from '../../services/offlineSync';
-import { colors, touchTargets, typography } from '../../theme';
+import { colors, radius, shadow, touchTargets, typography } from '../../theme';
 
 export interface OfflineReviewListProps {
   sessionId: string;
@@ -76,8 +76,10 @@ export function OfflineReviewList({ sessionId, ctx, refreshKey }: OfflineReviewL
             <li
               key={item.id}
               style={{
+                background: colors.ui.background,
                 border: `1px solid ${colors.ui.border}`,
-                borderRadius: 8,
+                borderRadius: radius.medium,
+                boxShadow: shadow.low,
                 padding: 16,
                 marginBottom: 12,
               }}

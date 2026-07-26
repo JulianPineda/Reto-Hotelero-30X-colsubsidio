@@ -1,4 +1,4 @@
-import { colors, touchTargets } from '../../theme';
+import { colors, radius, touchTargets } from '../../theme';
 
 export interface BulkActionBarProps {
   pendingCount: number;
@@ -26,7 +26,7 @@ export function BulkActionBar({ pendingCount, onApproveAll }: BulkActionBarProps
           background: colors.ui.success,
           color: '#ffffff',
           border: 'none',
-          borderRadius: 8,
+          borderRadius: radius.small,
           fontWeight: 600,
           cursor: pendingCount === 0 ? 'not-allowed' : 'pointer',
           opacity: pendingCount === 0 ? 0.5 : 1,

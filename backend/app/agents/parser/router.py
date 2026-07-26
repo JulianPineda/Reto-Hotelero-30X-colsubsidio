@@ -6,14 +6,14 @@ from app.agents.parser import extractor
 from app.agents.parser.schemas import ParseRequest, ParseResponse
 from app.agents.parser.unit_normalizer import normalize_unit
 from app.agents.voice.schemas import OperatorClaims
-from app.api.deps import get_current_operator
+from app.api.deps import require_role
 
 router = APIRouter(prefix="/agents", tags=["parser"])
 
 
 @router.post("/parse", response_model=ParseResponse)
 async def parse_transcript(
-    request: ParseRequest, _operator: OperatorClaims = Depends(get_current_operator)
+    request: ParseRequest, _operator: OperatorClaims = Depends(require_role("operator"))
 ) -> ParseResponse:
     raw = await extractor.extract(request.transcript)
 

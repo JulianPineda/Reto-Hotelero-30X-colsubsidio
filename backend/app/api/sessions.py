@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voice.schemas import OperatorClaims
-from app.api.deps import get_current_operator
+from app.api.deps import require_role
 from app.database import get_db
 from app.models.count_session import CountSession
 from app.models.warehouse import Warehouse
@@ -54,7 +54,7 @@ class SessionListItem(BaseModel):
 async def create_session(
     request: CreateSessionRequest,
     session: AsyncSession = Depends(get_db),
-    operator: OperatorClaims = Depends(get_current_operator),
+    operator: OperatorClaims = Depends(require_role("operator")),
 ) -> CountSession:
     count_session = CountSession(
         warehouse_id=request.warehouse_id, operator_id=operator.operator_id, shift=request.shift
@@ -69,7 +69,7 @@ async def create_session(
 async def complete_session(
     session_id: UUID,
     session: AsyncSession = Depends(get_db),
-    _operator: OperatorClaims = Depends(get_current_operator),
+    _operator: OperatorClaims = Depends(require_role("operator")),
 ) -> CountSession:
     """CLAUDE.md's session lifecycle (`in_progress -> pending_review ->
     approved -> exported`) was never actually enforced anywhere in this
@@ -101,7 +101,7 @@ async def complete_session(
 @router.get("", response_model=list[SessionListItem])
 async def list_sessions(
     session: AsyncSession = Depends(get_db),
-    _operator: OperatorClaims = Depends(get_current_operator),
+    _operator: OperatorClaims = Depends(require_role("supervisor")),
 ) -> list[SessionListItem]:
     """Lets the Supervisor Dashboard's session picker (`SessionSelect`)
     discover which session to review — nothing in this codebase automates

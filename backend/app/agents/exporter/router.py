@@ -28,7 +28,7 @@ from app.agents.exporter.schemas import (
     SessionAlreadyExportedError,
 )
 from app.agents.voice.schemas import OperatorClaims
-from app.api.deps import get_current_operator
+from app.api.deps import require_role
 from app.api.supervisor import can_export
 from app.database import AsyncSessionLocal, get_db
 from app.models.count_item import CountItem
@@ -54,7 +54,7 @@ async def request_export(
     request: ExportRequest,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
-    _operator: OperatorClaims = Depends(get_current_operator),
+    _operator: OperatorClaims = Depends(require_role("supervisor")),
 ) -> ExportAccepted:
     try:
         await validate_can_export(request.session_id, session)
@@ -71,7 +71,7 @@ async def request_export(
 
 @router.get("/export/jobs/{job_id}", response_model=ExportJobStatus)
 async def get_export_job(
-    job_id: UUID, _operator: OperatorClaims = Depends(get_current_operator)
+    job_id: UUID, _operator: OperatorClaims = Depends(require_role("supervisor"))
 ) -> ExportJobStatus:
     job = _JOBS.get(job_id)
     if job is None:

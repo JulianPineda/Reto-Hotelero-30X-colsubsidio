@@ -32,6 +32,7 @@ export function FlaggedItemRow({ item, onApprove, onReject }: FlaggedItemRowProp
     <>
       <tr
         onClick={() => setExpanded((prev) => !prev)}
+        className="hoverable-row"
         style={{ cursor: 'pointer', borderBottom: `1px solid ${colors.ui.border}` }}
       >
         <td style={{ padding: 12 }}>

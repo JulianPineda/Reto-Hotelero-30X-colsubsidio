@@ -5,6 +5,7 @@ import { ExpiryConfirmDialog } from '../../components/ExpiryConfirmDialog';
 import { ManualEntryForm } from '../../components/ManualEntryForm';
 import { OfflineBanner } from '../../components/OfflineBanner';
 import { OfflineReviewList } from '../../components/OfflineReviewList';
+import { headerPrimaryButtonStyle, PageHeader } from '../../components/PageHeader';
 import { TrafficLight } from '../../components/TrafficLight';
 import { VoiceButton, type VoiceButtonPhase } from '../../components/VoiceButton';
 import { useVoiceSession } from '../../hooks/useVoiceSession';
@@ -16,7 +17,7 @@ import {
   type SyncContext,
 } from '../../services/offlineSync';
 import { useSessionStore } from '../../store/sessionStore';
-import { colors, logos, touchTargets, typography } from '../../theme';
+import { colors, radius, shadow, touchTargets, typography } from '../../theme';
 
 export interface CountSessionProps {
   /** Fully-formed `ws(s)://host/ws/voice/{session_id}?token=...`. */
@@ -208,177 +209,196 @@ export function CountSession({
   const dialogsBlockVoice = uiState.phase === 'confirming' || uiState.phase === 'confirming_expiry_date';
 
   return (
-    <div style={{ padding: 24, paddingTop: isOffline ? 56 : 24, fontFamily: typography.fontFamily }}>
+    <div style={{ minHeight: '100vh', fontFamily: typography.fontFamily }}>
       <OfflineBanner isOffline={isOffline} />
 
-      <div style={{ marginBottom: 16 }}>
-        <BackToMenuButton />
+      <div style={{ paddingTop: isOffline ? 40 : 0 }}>
+        <PageHeader
+          title={`Conteo de Bodega — ${warehouseCode}`}
+          subtitle={`Turno ${shiftLabel}`}
+          actions={
+            <>
+              <BackToMenuButton variant="onDark" />
+              {!sessionCompleted && (
+                <button
+                  type="button"
+                  onClick={handleCompleteSession}
+                  disabled={completing || isOffline}
+                  style={headerPrimaryButtonStyle(!completing && !isOffline)}
+                >
+                  {completing ? 'Finalizando…' : 'Terminar inventario'}
+                </button>
+              )}
+            </>
+          }
+        />
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <img src={logos.iconYellow} alt="" style={{ height: 32, flexShrink: 0 }} />
-          <h1 style={{ color: colors.primary.blue }}>
-            Conteo de Bodega — {warehouseCode} · Turno {shiftLabel}
-          </h1>
-        </div>
-        {!sessionCompleted && (
-          <button
-            type="button"
-            onClick={handleCompleteSession}
-            disabled={completing || isOffline}
+      <div style={{ maxWidth: 720, margin: '0 auto', padding: '24px 16px' }}>
+        {completeError && <p style={{ color: colors.ui.error }}>{completeError}</p>}
+
+        {sessionCompleted ? (
+          <p
+            role="status"
             style={{
-              minHeight: touchTargets.minimum,
-              minWidth: touchTargets.minimum,
-              padding: '0 20px',
-              background: isOffline ? colors.neutral.grafito40 : colors.ui.success,
+              background: colors.ui.success,
               color: '#ffffff',
-              border: 'none',
-              borderRadius: 8,
+              padding: '12px 16px',
+              borderRadius: radius.small,
               fontWeight: 600,
-              cursor: isOffline ? 'not-allowed' : 'pointer',
-              whiteSpace: 'nowrap',
-              flexShrink: 0,
+              boxShadow: shadow.low,
             }}
           >
-            {completing ? 'Finalizando…' : 'Terminar inventario'}
-          </button>
+            Inventario finalizado — enviado a revisión del supervisor.
+          </p>
+        ) : (
+          <p style={{ color: colors.ui.textSecondary, minHeight: 24 }}>{instruction}</p>
         )}
-      </div>
 
-      {completeError && <p style={{ color: colors.ui.error }}>{completeError}</p>}
-
-      {sessionCompleted ? (
-        <p
-          role="status"
+        <div
           style={{
-            background: colors.ui.success,
-            color: '#ffffff',
-            padding: '12px 16px',
-            borderRadius: 8,
-            fontWeight: 600,
+            background: colors.ui.background,
+            borderRadius: radius.large,
+            padding: 24,
+            boxShadow: shadow.low,
           }}
         >
-          Inventario finalizado — enviado a revisión del supervisor.
-        </p>
-      ) : (
-        <p style={{ color: colors.ui.textSecondary, minHeight: 24 }}>{instruction}</p>
-      )}
-
-      {sessionCompleted ? null : isOffline ? (
-        <ManualEntryForm onSubmit={handleManualSubmit} />
-      ) : uiState.phase === 'manual_fallback' ? (
-        <>
-          {manualFallbackError && <p style={{ color: colors.ui.error }}>{manualFallbackError}</p>}
-          <ManualEntryForm onSubmit={handleManualFallbackSubmit} />
-        </>
-      ) : (
-        <>
-          {!dialogsBlockVoice && (
-            <div style={{ display: 'flex', justifyContent: 'center', margin: '32px 0' }}>
-              <VoiceButton phase={buttonPhase} onPressStart={startPTT} onPressEnd={stopPTT} />
-            </div>
-          )}
-
-          {uiState.phase === 'confirming' && (
+          {sessionCompleted ? null : isOffline ? (
+            <ManualEntryForm onSubmit={handleManualSubmit} />
+          ) : uiState.phase === 'manual_fallback' ? (
             <>
-              {/* oracle_code === null covers BOTH cases the voice flow can't
-                  disambiguate mid-dictation: truly unmatched (sin_homologar,
-                  score <0.50) AND ambiguous (0.50-0.79, several candidates —
-                  the REST/offline flow shows a 3-alternatives picker for
-                  this band, but there's no equivalent for a live voice
-                  confirmation). Confirmed live: a made-up product landed at
-                  0.5488 (ambiguous band) and was silently saved with the
-                  raw dictated text and sin_homologar=false — no warning at
-                  all — which is exactly the gap CLAUDE.md §3.2 leaves open
-                  for voice specifically. */}
-              {uiState.item.oracle_code === null && (
-                <p
-                  role="alert"
-                  style={{
-                    background: colors.primary.yellow,
-                    color: colors.ui.textPrimary,
-                    fontWeight: 700,
-                    padding: '8px 16px',
-                    borderRadius: 8,
-                    maxWidth: 480,
-                  }}
-                >
-                  ⚠ "{uiState.item.article}" no se identificó con certeza en el inventario — se guardará como
-                  texto libre.
-                </p>
+              {manualFallbackError && <p style={{ color: colors.ui.error }}>{manualFallbackError}</p>}
+              <ManualEntryForm onSubmit={handleManualFallbackSubmit} />
+            </>
+          ) : (
+            <>
+              {!dialogsBlockVoice && (
+                <div style={{ display: 'flex', justifyContent: 'center', margin: '16px 0' }}>
+                  <VoiceButton phase={buttonPhase} onPressStart={startPTT} onPressEnd={stopPTT} />
+                </div>
               )}
-              <ConfirmDialog
-                displayText={uiState.item.display_text}
-                articleName={uiState.item.article}
-                quantity={uiState.item.quantity}
-                unit={uiState.item.unit}
-                onConfirm={() => confirm(true)}
-                onCorrect={() => confirm(false)}
-              />
+
+              {uiState.phase === 'confirming' && (
+                <>
+                  {/* oracle_code === null covers BOTH cases the voice flow can't
+                      disambiguate mid-dictation: truly unmatched (sin_homologar,
+                      score <0.50) AND ambiguous (0.50-0.79, several candidates —
+                      the REST/offline flow shows a 3-alternatives picker for
+                      this band, but there's no equivalent for a live voice
+                      confirmation). Confirmed live: a made-up product landed at
+                      0.5488 (ambiguous band) and was silently saved with the
+                      raw dictated text and sin_homologar=false — no warning at
+                      all — which is exactly the gap CLAUDE.md §3.2 leaves open
+                      for voice specifically. */}
+                  {uiState.item.oracle_code === null && (
+                    <p
+                      role="alert"
+                      style={{
+                        background: colors.primary.yellow,
+                        color: colors.ui.textPrimary,
+                        fontWeight: 700,
+                        padding: '8px 16px',
+                        borderRadius: radius.small,
+                        maxWidth: 480,
+                        margin: '0 auto 16px',
+                      }}
+                    >
+                      ⚠ "{uiState.item.article}" no se identificó con certeza en el inventario — se guardará como
+                      texto libre.
+                    </p>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'center' }}>
+                    <ConfirmDialog
+                      displayText={uiState.item.display_text}
+                      articleName={uiState.item.article}
+                      quantity={uiState.item.quantity}
+                      unit={uiState.item.unit}
+                      onConfirm={() => confirm(true)}
+                      onCorrect={() => confirm(false)}
+                    />
+                  </div>
+                </>
+              )}
+
+              {uiState.phase === 'confirming_expiry_date' && (
+                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                  <ExpiryConfirmDialog
+                    displayText={uiState.displayText}
+                    onConfirm={() => confirm(true)}
+                    onCorrect={() => confirm(false)}
+                  />
+                </div>
+              )}
             </>
           )}
+        </div>
 
-          {uiState.phase === 'confirming_expiry_date' && (
-            <ExpiryConfirmDialog
-              displayText={uiState.displayText}
-              onConfirm={() => confirm(true)}
-              onCorrect={() => confirm(false)}
-            />
+        <OfflineReviewList sessionId={sessionId} ctx={syncCtx} refreshKey={reviewRefreshKey} />
+
+        <h2 style={{ marginTop: 40, color: colors.ui.textPrimary }}>
+          Ítems contados en esta sesión ({items.length})
+        </h2>
+        {deleteError && <p style={{ color: colors.ui.error }}>{deleteError}</p>}
+        <ul
+          style={{
+            listStyle: 'none',
+            padding: 0,
+            background: colors.ui.background,
+            borderRadius: radius.medium,
+            boxShadow: shadow.low,
+            overflow: 'hidden',
+          }}
+        >
+          {items.length === 0 && (
+            <li style={{ padding: 20, color: colors.ui.textSecondary, textAlign: 'center' }}>
+              Aún no hay ítems contados en esta sesión.
+            </li>
           )}
-        </>
-      )}
-
-      <OfflineReviewList sessionId={sessionId} ctx={syncCtx} refreshKey={reviewRefreshKey} />
-
-      <h2 style={{ marginTop: 40, color: colors.ui.textPrimary }}>
-        Ítems contados en esta sesión ({items.length})
-      </h2>
-      {deleteError && <p style={{ color: colors.ui.error }}>{deleteError}</p>}
-      <ul style={{ listStyle: 'none', padding: 0 }}>
-        {items.map((item) => (
-          <li
-            key={item.id}
-            style={{
-              padding: '8px 0',
-              borderBottom: `1px solid ${colors.ui.border}`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-              flexWrap: 'wrap',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
-              <TrafficLight color={item.trafficLight} isPerishable={item.expiryDate !== null} />
-              <span style={{ wordBreak: 'break-word' }}>
-                {item.quantity} {item.unit} — {item.articleName}
-                {item.sinHomologar ? ' (sin homologar)' : ''}
-                {item.expiryDate ? ` — vence ${item.expiryDate}` : ''}
-                {item.isOffline ? ' (capturado offline)' : ''}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => handleDeleteItem(item.id)}
-              disabled={deletingItemId === item.id}
-              aria-label={`Eliminar ${item.articleName}`}
+          {items.map((item) => (
+            <li
+              key={item.id}
+              className="hoverable-row"
               style={{
-                minHeight: touchTargets.minimum,
-                minWidth: touchTargets.minimum,
-                background: 'none',
-                border: `1px solid ${colors.ui.error}`,
-                borderRadius: 8,
-                color: colors.ui.error,
-                cursor: deletingItemId === item.id ? 'not-allowed' : 'pointer',
-                flexShrink: 0,
+                padding: '12px 16px',
+                borderBottom: `1px solid ${colors.ui.border}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                flexWrap: 'wrap',
               }}
             >
-              {deletingItemId === item.id ? '…' : 'Eliminar'}
-            </button>
-          </li>
-        ))}
-      </ul>
+              <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                <TrafficLight color={item.trafficLight} isPerishable={item.expiryDate !== null} />
+                <span style={{ wordBreak: 'break-word' }}>
+                  {item.quantity} {item.unit} — {item.articleName}
+                  {item.sinHomologar ? ' (sin homologar)' : ''}
+                  {item.expiryDate ? ` — vence ${item.expiryDate}` : ''}
+                  {item.isOffline ? ' (capturado offline)' : ''}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleDeleteItem(item.id)}
+                disabled={deletingItemId === item.id}
+                aria-label={`Eliminar ${item.articleName}`}
+                style={{
+                  minHeight: touchTargets.minimum,
+                  minWidth: touchTargets.minimum,
+                  background: 'none',
+                  border: `1px solid ${colors.ui.error}`,
+                  borderRadius: radius.small,
+                  color: colors.ui.error,
+                  cursor: deletingItemId === item.id ? 'not-allowed' : 'pointer',
+                  flexShrink: 0,
+                }}
+              >
+                {deletingItemId === item.id ? '…' : 'Eliminar'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }

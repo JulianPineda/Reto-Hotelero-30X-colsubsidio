@@ -1,39 +1,41 @@
 import { useState } from 'react';
 import { SessionSelect } from '../SessionSelect';
 import { WarehouseSelect } from '../WarehouseSelect';
-import { login } from '../../services/auth';
-import { colors, logos, touchTargets, typography } from '../../theme';
+import { clearStoredSession, getStoredSession, login, storeSession, type Role } from '../../services/auth';
+import { colors, gradients, logos, radius, shadow, touchTargets, typography } from '../../theme';
 
 export interface LoginProps {
   apiBaseUrl: string;
   wsBaseUrl: string;
 }
 
-type Role = 'operator' | 'supervisor';
-type Step = 'login' | 'role-select' | Role;
-
-const TOKEN_STORAGE_KEY = 'piscilago_auth_token';
-
 const inputStyle = {
   minHeight: touchTargets.minimum,
   fontSize: typography.sizes.base,
   fontFamily: typography.fontFamily,
-  padding: '8px 12px',
+  padding: '12px 14px',
   border: `1px solid ${colors.ui.border}`,
-  borderRadius: 8,
+  borderRadius: 10,
   width: '100%',
   boxSizing: 'border-box' as const,
+  transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
 };
 
+// CLAUDE.md §2 reserves yellow for "Botón principal" — the primary CTA on
+// every screen (this one, WarehouseSelect, SessionSelect) uses it rather
+// than blue, which is reserved for headers/links/text-on-light per the
+// same color table.
 const buttonStyle = (enabled: boolean) => ({
   minHeight: touchTargets.minimum,
-  background: enabled ? colors.primary.blue : colors.neutral.grafito40,
-  color: '#ffffff',
+  background: enabled ? colors.primary.yellow : colors.neutral.grafito40,
+  color: enabled ? colors.ui.textPrimary : '#ffffff',
   border: 'none',
-  borderRadius: 8,
+  borderRadius: 10,
   fontSize: typography.sizes.base,
-  fontWeight: 600,
+  fontWeight: 700,
   cursor: enabled ? 'pointer' : 'not-allowed',
+  boxShadow: enabled ? '0 2px 8px rgba(255, 208, 0, 0.35)' : 'none',
+  transition: 'transform 0.1s ease, box-shadow 0.15s ease',
 });
 
 /** Colsubsidio lockup on the brand-blue header — CLAUDE.md §2: the white
@@ -42,8 +44,8 @@ function BrandHeader() {
   return (
     <div
       style={{
-        background: colors.primary.blue,
-        padding: '20px 24px',
+        background: gradients.brandBlue,
+        padding: '28px 24px',
         display: 'flex',
         justifyContent: 'center',
       }}
@@ -56,19 +58,16 @@ function BrandHeader() {
 /**
  * Single entry point for both the operator and supervisor flows (previously
  * two separate URLs — `/select` and `/supervisor-login` — with their own
- * duplicated login forms, even though both hit the exact same
- * `POST /auth/login` and there's no role concept on the backend at all).
- * Login happens once here; the operator then picks what they came to do.
+ * duplicated login forms). Login happens once here; `role` comes back from
+ * the backend (real credential check against the `operators` table, not a
+ * frontend choice) and routes straight to the matching module — an
+ * operator-role account never sees the supervisor screens and vice versa,
+ * mirroring the server-side `require_role` gate on every endpoint.
  */
 export function Login({ apiBaseUrl, wsBaseUrl }: LoginProps) {
-  // Re-mounted every time something navigates back to "/" (BackToMenuButton,
-  // the router-state guards in App.tsx) — without persisting the token
-  // somewhere outside this component, "back to menu" silently demoted to
-  // "log in again," which defeats the point of a quick way back. sessionStorage
-  // (not localStorage) so a shared tablet doesn't keep a stale session
-  // across actual browser restarts/different operators.
-  const [authToken, setAuthToken] = useState<string | null>(() => sessionStorage.getItem(TOKEN_STORAGE_KEY));
-  const [step, setStep] = useState<Step>(() => (sessionStorage.getItem(TOKEN_STORAGE_KEY) ? 'role-select' : 'login'));
+  const stored = getStoredSession();
+  const [authToken, setAuthToken] = useState<string | null>(stored?.token ?? null);
+  const [role, setRole] = useState<Role | null>(stored?.role ?? null);
   const [operatorId, setOperatorId] = useState('');
   const [pin, setPin] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -79,10 +78,10 @@ export function Login({ apiBaseUrl, wsBaseUrl }: LoginProps) {
     setLoginError(null);
     setBusy(true);
     try {
-      const token = await login(apiBaseUrl, operatorId, pin);
-      sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
-      setAuthToken(token);
-      setStep('role-select');
+      const result = await login(apiBaseUrl, operatorId, pin);
+      storeSession(result.token, result.role);
+      setAuthToken(result.token);
+      setRole(result.role);
     } catch {
       setLoginError('No se pudo iniciar sesión. Verifica tu ID de operario y PIN.');
     } finally {
@@ -91,30 +90,43 @@ export function Login({ apiBaseUrl, wsBaseUrl }: LoginProps) {
   };
 
   const handleLogout = () => {
-    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+    clearStoredSession();
     setAuthToken(null);
+    setRole(null);
     setOperatorId('');
     setPin('');
-    setStep('login');
   };
 
-  if (step === 'operator' && authToken) {
-    return <WarehouseSelect apiBaseUrl={apiBaseUrl} wsBaseUrl={wsBaseUrl} authToken={authToken} />;
+  if (authToken && role === 'operator') {
+    return <WarehouseSelect apiBaseUrl={apiBaseUrl} wsBaseUrl={wsBaseUrl} authToken={authToken} onLogout={handleLogout} />;
   }
-  if (step === 'supervisor' && authToken) {
-    return <SessionSelect apiBaseUrl={apiBaseUrl} authToken={authToken} />;
+  if (authToken && role === 'supervisor') {
+    return <SessionSelect apiBaseUrl={apiBaseUrl} authToken={authToken} onLogout={handleLogout} />;
   }
 
   return (
-    <div style={{ fontFamily: typography.fontFamily }}>
+    <div style={{ minHeight: '100vh', background: colors.ui.surface, fontFamily: typography.fontFamily }}>
       <BrandHeader />
-      <div style={{ padding: 24, maxWidth: 420 }}>
-        <h1 style={{ color: colors.primary.blue }}>Piscilago — Conteo de Inventario</h1>
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 16px' }}>
+        <div
+          style={{
+            width: '100%',
+            maxWidth: 400,
+            background: colors.ui.background,
+            borderRadius: radius.large,
+            padding: 32,
+            boxShadow: shadow.medium,
+            boxSizing: 'border-box',
+          }}
+        >
+          <h1 style={{ color: colors.primary.blue, marginTop: 0, fontSize: '1.5rem' }}>
+            Piscilago — Conteo de Inventario
+          </h1>
+          <p style={{ color: colors.ui.textSecondary, marginTop: -8 }}>Ingresa tus credenciales para continuar.</p>
 
-        {step === 'login' && (
-          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 24 }}>
             <div>
-              <label htmlFor="operator-id" style={{ display: 'block', marginBottom: 4 }}>
+              <label htmlFor="operator-id" style={{ display: 'block', marginBottom: 6, fontWeight: 600, color: colors.ui.textPrimary }}>
                 ID de operario
               </label>
               <input
@@ -126,7 +138,7 @@ export function Login({ apiBaseUrl, wsBaseUrl }: LoginProps) {
               />
             </div>
             <div>
-              <label htmlFor="operator-pin" style={{ display: 'block', marginBottom: 4 }}>
+              <label htmlFor="operator-pin" style={{ display: 'block', marginBottom: 6, fontWeight: 600, color: colors.ui.textPrimary }}>
                 PIN
               </label>
               <input
@@ -138,46 +150,16 @@ export function Login({ apiBaseUrl, wsBaseUrl }: LoginProps) {
                 style={inputStyle}
               />
             </div>
-            {loginError && <p style={{ color: colors.ui.error }}>{loginError}</p>}
+            {loginError && <p style={{ color: colors.ui.error, margin: 0 }}>{loginError}</p>}
             <button
               type="submit"
               disabled={busy || !operatorId || !pin}
               style={buttonStyle(!busy && !!operatorId && !!pin)}
             >
-              Ingresar
+              {busy ? 'Ingresando…' : 'Ingresar'}
             </button>
           </form>
-        )}
-
-        {step === 'role-select' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <p style={{ color: colors.ui.textSecondary }}>¿Qué deseas hacer?</p>
-            <button type="button" onClick={() => setStep('operator')} style={buttonStyle(true)}>
-              Contar inventario
-            </button>
-            <button
-              type="button"
-              onClick={() => setStep('supervisor')}
-              style={{ ...buttonStyle(true), background: colors.neutral.grafito }}
-            >
-              Panel de supervisor
-            </button>
-            <button
-              type="button"
-              onClick={handleLogout}
-              style={{
-                minHeight: touchTargets.minimum,
-                background: 'none',
-                border: 'none',
-                color: colors.ui.textSecondary,
-                textDecoration: 'underline',
-                cursor: 'pointer',
-              }}
-            >
-              Cerrar sesión
-            </button>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );

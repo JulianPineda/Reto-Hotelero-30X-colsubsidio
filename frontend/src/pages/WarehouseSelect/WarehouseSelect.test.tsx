@@ -34,7 +34,7 @@ describe('WarehouseSelect', () => {
     });
 
     render(
-      <WarehouseSelect apiBaseUrl="http://api.test/api/v1" wsBaseUrl="ws://api.test/ws" authToken="token-abc" />,
+      <WarehouseSelect apiBaseUrl="http://api.test/api/v1" wsBaseUrl="ws://api.test/ws" authToken="token-abc" onLogout={vi.fn()} />,
     );
 
     await waitFor(() => expect(screen.getByLabelText(/bodega/i)).toBeInTheDocument());
@@ -46,7 +46,7 @@ describe('WarehouseSelect', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
 
     render(
-      <WarehouseSelect apiBaseUrl="http://api.test/api/v1" wsBaseUrl="ws://api.test/ws" authToken="token-abc" />,
+      <WarehouseSelect apiBaseUrl="http://api.test/api/v1" wsBaseUrl="ws://api.test/ws" authToken="token-abc" onLogout={vi.fn()} />,
     );
 
     await waitFor(() => expect(screen.getByText(/no se pudieron cargar las bodegas/i)).toBeInTheDocument());
@@ -59,7 +59,7 @@ describe('WarehouseSelect', () => {
     });
 
     render(
-      <WarehouseSelect apiBaseUrl="http://api.test/api/v1" wsBaseUrl="ws://api.test/ws" authToken="token-abc" />,
+      <WarehouseSelect apiBaseUrl="http://api.test/api/v1" wsBaseUrl="ws://api.test/ws" authToken="token-abc" onLogout={vi.fn()} />,
     );
 
     await waitFor(() => expect(screen.getByLabelText(/bodega/i)).toBeInTheDocument());

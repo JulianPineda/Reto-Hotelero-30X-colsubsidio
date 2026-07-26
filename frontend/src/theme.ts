@@ -56,3 +56,24 @@ export const logos = {
   // Lockup completo "Colsubsidio" en blanco — SOLO sobre fondos oscuros/de color (azul, grafito). Invisible sobre blanco.
   fullWhite: '/brand/logo-full-white.png',
 } as const;
+
+export const radius = {
+  small: 8,
+  medium: 12,
+  large: 16,
+  pill: 999,
+} as const;
+
+// Elevation scale — used to lift cards/dialogs off the page background
+// instead of the flat border-only look the app had before this pass.
+export const shadow = {
+  low: '0 1px 3px rgba(26, 26, 46, 0.08)',
+  medium: '0 4px 16px rgba(26, 26, 46, 0.10)',
+  high: '0 8px 28px rgba(26, 26, 46, 0.16)',
+} as const;
+
+// Brand-blue gradient — the shared header bar (PageHeader) and Login's
+// card both anchor on this rather than a flat colors.primary.blue fill.
+export const gradients = {
+  brandBlue: `linear-gradient(135deg, ${colors.primary.blue} 0%, #005a99 100%)`,
+} as const;

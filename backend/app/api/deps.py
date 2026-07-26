@@ -29,3 +29,23 @@ async def get_current_operator(
         return OperatorClaims(**payload)
     except jwt.InvalidTokenError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido o expirado") from exc
+
+
+def require_role(*allowed_roles: str):
+    """Module-boundary gate: an 'operator'-role token can't hit a
+    supervisor-only endpoint and vice versa, regardless of what the
+    frontend happens to show. Roles come from the `operators` table
+    (migration 003) via `app/api/auth.py::login`, not a frontend choice."""
+
+    async def _check(operator: OperatorClaims = Depends(get_current_operator)) -> OperatorClaims:
+        if operator.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "FORBIDDEN_ROLE",
+                    "message": "Tu cuenta no tiene permiso para acceder a este módulo.",
+                },
+            )
+        return operator
+
+    return _check

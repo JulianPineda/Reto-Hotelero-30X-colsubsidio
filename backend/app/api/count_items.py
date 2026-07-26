@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voice.schemas import OperatorClaims
-from app.api.deps import get_current_operator
+from app.api.deps import require_role
 from app.database import get_db
 from app.models.count_item import CountItem
 from app.models.count_session import CountSession
@@ -71,7 +71,7 @@ class CountItemResponse(BaseModel):
 async def create_count_item(
     request: CreateCountItemRequest,
     session: AsyncSession = Depends(get_db),
-    operator: OperatorClaims = Depends(get_current_operator),
+    operator: OperatorClaims = Depends(require_role("operator")),
 ) -> CountItemResponse:
     try:
         result = await persist_count_item(
@@ -106,7 +106,7 @@ async def create_count_item(
 async def delete_count_item(
     item_id: UUID,
     session: AsyncSession = Depends(get_db),
-    operator: OperatorClaims = Depends(get_current_operator),
+    operator: OperatorClaims = Depends(require_role("operator")),
 ) -> dict:
     """Undo for a mis-dictated item ("el operario se equivocó"). The
     `ItemDeleted` event type/payload (schemas/events.py) existed from the

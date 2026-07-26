@@ -3,8 +3,10 @@ import { CountSession, type CountSessionProps } from './pages/CountSession';
 import { Login } from './pages/Login';
 import { SupervisorDashboard, type SupervisorDashboardProps } from './pages/SupervisorDashboard';
 
-// App shell: one entry point (`/`) — login once, then choose "Contar
-// inventario" or "Panel de supervisor" (see pages/Login). Previously two
+// App shell: one entry point (`/`) — login once, then auto-routed by the
+// backend-verified `role` claim straight into the operator or supervisor
+// module (see pages/Login); role is a real security boundary
+// (`require_role` on every endpoint), not a menu choice. Previously two
 // separate URLs (/select, /supervisor-login) each with their own login
 // form, despite hitting the exact same POST /auth/login underneath and no
 // role concept existing on the backend at all. /count and /supervisor have

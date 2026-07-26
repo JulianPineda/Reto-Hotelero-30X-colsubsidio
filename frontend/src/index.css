@@ -1,0 +1,109 @@
+/* Global reset + base styles. Before this file existed the app had none —
+   every screen inherited raw UA defaults (body margin, serif h1 margins,
+   no focus rings, no hover feedback on buttons) on top of ad-hoc inline
+   styles, which is most of why it read as "flat". */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: linear-gradient(180deg, #f8f9fa 0%, #eef1f4 100%);
+  color: #1a1a2e;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0 0 0.5em 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  transition: transform 0.12s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+
+button:not(:disabled):hover {
+  filter: brightness(1.06);
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  filter: none;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 3px solid #0067b1;
+  outline-offset: 2px;
+}
+
+input:focus,
+select:focus {
+  border-color: #0067b1 !important;
+  box-shadow: 0 0 0 3px rgba(0, 103, 177, 0.15);
+}
+
+::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #bcbcbb;
+  border-radius: 999px;
+}
+
+/* VoiceButton's listening pulse — CLAUDE.md §4 VoiceButton is the primary
+   affordance, so "actively capturing" gets a visible animated cue rather
+   than a static ring. */
+@keyframes voice-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 208, 0, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 20px rgba(255, 208, 0, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 208, 0, 0);
+  }
+}
+
+.voice-button-listening {
+  animation: voice-pulse 1.4s ease-out infinite;
+}
+
+.hoverable-row:hover {
+  background: rgba(0, 103, 177, 0.05);
+}
+
+@media (max-width: 480px) {
+  h1 {
+    font-size: 1.25rem;
+  }
+}

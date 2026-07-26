@@ -19,7 +19,7 @@ from app.agents.auditor.schemas import (
 from app.agents.auditor.threshold import check_threshold
 from app.agents.auditor.trend import check_trend
 from app.agents.voice.schemas import OperatorClaims
-from app.api.deps import get_current_operator
+from app.api.deps import require_role
 from app.database import get_db
 from app.models.catalog_item import CatalogItem
 from app.models.historical_count import HistoricalCount
@@ -158,6 +158,6 @@ async def run_audit(session: AsyncSession, request: AuditRequest) -> AuditResult
 async def audit(
     request: AuditRequest,
     session: AsyncSession = Depends(get_db),
-    _operator: OperatorClaims = Depends(get_current_operator),
+    _operator: OperatorClaims = Depends(require_role("operator")),
 ) -> AuditResult:
     return await run_audit(session, request)

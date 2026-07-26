@@ -11,7 +11,7 @@ from app.agents.catalog.schemas import (
     HomologateResult,
 )
 from app.agents.voice.schemas import OperatorClaims
-from app.api.deps import get_current_operator
+from app.api.deps import require_role
 from app.database import get_db
 from app.models.catalog_item import CatalogItem
 from app.services import learning_service
@@ -87,7 +87,7 @@ async def run_homologation(
 async def homologate(
     request: HomologateRequest,
     session: AsyncSession = Depends(get_db),
-    _operator: OperatorClaims = Depends(get_current_operator),
+    _operator: OperatorClaims = Depends(require_role("operator")),
 ) -> HomologateResult:
     client = get_qdrant_client()
     try:
@@ -100,7 +100,7 @@ async def homologate(
 async def catalog_feedback(
     request: CatalogFeedbackRequest,
     session: AsyncSession = Depends(get_db),
-    _operator: OperatorClaims = Depends(get_current_operator),
+    _operator: OperatorClaims = Depends(require_role("operator")),
 ) -> CatalogFeedbackResponse:
     result = await learning_service.record_correction(
         session,

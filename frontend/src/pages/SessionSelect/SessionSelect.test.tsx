@@ -39,7 +39,7 @@ describe('SessionSelect', () => {
       ],
     });
 
-    render(<SessionSelect apiBaseUrl="http://api.test/api/v1" authToken="token-abc" />);
+    render(<SessionSelect apiBaseUrl="http://api.test/api/v1" authToken="token-abc" onLogout={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByLabelText(/sesión a revisar/i)).toBeInTheDocument());
     expect(screen.getByText(/PSL-ALMACEN-GENERAL/)).toBeInTheDocument();
@@ -48,7 +48,7 @@ describe('SessionSelect', () => {
   it('shows a message when there are no sessions yet', async () => {
     mockFetchByPath({ '/sessions': () => [] });
 
-    render(<SessionSelect apiBaseUrl="http://api.test/api/v1" authToken="token-abc" />);
+    render(<SessionSelect apiBaseUrl="http://api.test/api/v1" authToken="token-abc" onLogout={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText(/no hay sesiones/i)).toBeInTheDocument());
   });
@@ -67,7 +67,7 @@ describe('SessionSelect', () => {
       ],
     });
 
-    render(<SessionSelect apiBaseUrl="http://api.test/api/v1" authToken="token-abc" />);
+    render(<SessionSelect apiBaseUrl="http://api.test/api/v1" authToken="token-abc" onLogout={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByLabelText(/sesión a revisar/i)).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /abrir dashboard/i }));

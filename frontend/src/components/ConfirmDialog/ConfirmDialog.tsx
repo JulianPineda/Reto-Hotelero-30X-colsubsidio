@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { colors, touchTargets, typography } from '../../theme';
+import { colors, radius, shadow, touchTargets, typography } from '../../theme';
 
 export interface ConfirmDialogProps {
   /** Full "¿Nueve, cero: 90 GAL de Aceite Vegetal Premier 5L?" style text from the backend. */
@@ -45,9 +45,12 @@ export function ConfirmDialog({
       style={{
         background: colors.ui.background,
         border: `1px solid ${colors.ui.border}`,
-        borderRadius: 12,
+        borderRadius: radius.medium,
+        boxShadow: shadow.high,
         padding: 24,
+        width: '100%',
         maxWidth: 480,
+        boxSizing: 'border-box',
         fontFamily: typography.fontFamily,
       }}
     >
@@ -82,7 +85,7 @@ export function ConfirmDialog({
             background: colors.ui.success,
             color: '#ffffff',
             border: 'none',
-            borderRadius: 8,
+            borderRadius: radius.small,
             fontSize: typography.sizes.base,
             fontWeight: 600,
             flex: 1,
@@ -100,7 +103,7 @@ export function ConfirmDialog({
             background: colors.traffic.red,
             color: '#ffffff',
             border: 'none',
-            borderRadius: 8,
+            borderRadius: radius.small,
             fontSize: typography.sizes.base,
             fontWeight: 600,
             flex: 1,

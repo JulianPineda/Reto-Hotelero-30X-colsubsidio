@@ -105,12 +105,19 @@ def _build_persist_item(session: AsyncSession, session_id: UUID, operator_id: st
 
 
 async def verify_ws_token(token: str) -> OperatorClaims:
-    """Verifica JWT antes de aceptar la conexión WS (CWE-1390)."""
+    """Verifica JWT antes de aceptar la conexión WS (CWE-1390). Voice
+    capture is operator-module only — a supervisor-role token is valid but
+    has no business opening a PTT session, same module boundary
+    `app/api/deps.py::require_role` enforces on every REST endpoint."""
     try:
         payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
-        return OperatorClaims(**payload)
+        claims = OperatorClaims(**payload)
     except jwt.InvalidTokenError as exc:
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION) from exc
+
+    if claims.role != "operator":
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+    return claims
 
 
 @router.websocket("/ws/voice/{session_id}")

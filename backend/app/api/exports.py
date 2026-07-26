@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 
 from app.agents.exporter.oracle_csv import BASE_EXPORT_DIR
 from app.agents.voice.schemas import OperatorClaims
-from app.api.deps import get_current_operator
+from app.api.deps import require_role
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 
@@ -26,7 +26,7 @@ _MEDIA_TYPES = {
 @router.get("/{filename}")
 async def download_export(
     filename: str,
-    _operator: OperatorClaims = Depends(get_current_operator),
+    _operator: OperatorClaims = Depends(require_role("supervisor")),
 ) -> FileResponse:
     # Path(filename) alone would let ".." components escape BASE_EXPORT_DIR
     # once resolved — reject any filename that isn't a single bare path

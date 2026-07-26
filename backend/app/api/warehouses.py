@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voice.schemas import OperatorClaims
-from app.api.deps import get_current_operator
+from app.api.deps import require_role
 from app.database import get_db
 from app.models.warehouse import Warehouse
 
@@ -35,7 +35,7 @@ class WarehouseResponse(BaseModel):
 @router.get("", response_model=list[WarehouseResponse])
 async def list_warehouses(
     session: AsyncSession = Depends(get_db),
-    _operator: OperatorClaims = Depends(get_current_operator),
+    _operator: OperatorClaims = Depends(require_role("operator")),
 ) -> list[Warehouse]:
     result = await session.execute(
         select(Warehouse).where(Warehouse.is_active.is_(True)).order_by(Warehouse.name)

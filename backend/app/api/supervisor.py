@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.voice.schemas import OperatorClaims
-from app.api.deps import get_current_operator
+from app.api.deps import require_role
 from app.database import get_db
 from app.models.catalog_item import CatalogItem
 from app.models.count_item import CountItem
@@ -68,7 +68,7 @@ def _sort_key(row: tuple[CountItem, CatalogItem | None]) -> tuple[int, int]:
 async def get_flagged_items(
     session_id: UUID,
     session: AsyncSession = Depends(get_db),
-    _operator: OperatorClaims = Depends(get_current_operator),
+    _operator: OperatorClaims = Depends(require_role("supervisor")),
 ) -> list[FlaggedItemResponse]:
     # is_flagged is a permanent historical fact (this item WAS anomalous) —
     # without also requiring is_approved IS NULL, an item never leaves this
@@ -142,7 +142,7 @@ async def approve_item(
     item_id: UUID,
     request: ApproveRequest,
     session: AsyncSession = Depends(get_db),
-    _operator: OperatorClaims = Depends(get_current_operator),
+    _operator: OperatorClaims = Depends(require_role("supervisor")),
 ) -> dict:
     item = await _get_item_or_404(session, item_id)
 
@@ -176,7 +176,7 @@ async def reject_item(
     item_id: UUID,
     request: RejectRequest,
     session: AsyncSession = Depends(get_db),
-    _operator: OperatorClaims = Depends(get_current_operator),
+    _operator: OperatorClaims = Depends(require_role("supervisor")),
 ) -> dict:
     item = await _get_item_or_404(session, item_id)
     item.is_approved = False
@@ -208,7 +208,7 @@ async def bulk_approve(
     session_id: UUID,
     request: BulkApproveRequest,
     session: AsyncSession = Depends(get_db),
-    _operator: OperatorClaims = Depends(get_current_operator),
+    _operator: OperatorClaims = Depends(require_role("supervisor")),
 ) -> dict:
     approved_ids: list[UUID] = []
     for item_id in request.item_ids:
@@ -243,7 +243,7 @@ async def bulk_approve(
 async def get_session_events_endpoint(
     session_id: UUID,
     session: AsyncSession = Depends(get_db),
-    _operator: OperatorClaims = Depends(get_current_operator),
+    _operator: OperatorClaims = Depends(require_role("supervisor")),
 ) -> list[dict]:
     """Historial completo de eventos — solo para el Auditor de Costos, nunca
     expuesto a Oracle."""

@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { SupervisorDashboardProps } from '../SupervisorDashboard';
-import { colors, touchTargets, typography } from '../../theme';
+import { HeaderLogoutButton, PageHeader } from '../../components/PageHeader';
+import { colors, radius, shadow, touchTargets, typography } from '../../theme';
 
 export interface SessionSelectProps {
   apiBaseUrl: string;
   /** Already-authenticated — login happens once in `Login`, shared by both
    * the operator and supervisor flows (T-XXX "una sola URL"). */
   authToken: string;
+  onLogout: () => void;
 }
 
 interface SessionOption {
@@ -29,21 +31,21 @@ const inputStyle = {
   minHeight: touchTargets.minimum,
   fontSize: typography.sizes.base,
   fontFamily: typography.fontFamily,
-  padding: '8px 12px',
+  padding: '10px 12px',
   border: `1px solid ${colors.ui.border}`,
-  borderRadius: 8,
+  borderRadius: radius.small,
   width: '100%',
   boxSizing: 'border-box' as const,
 };
 
 const buttonStyle = (enabled: boolean) => ({
   minHeight: touchTargets.minimum,
-  background: enabled ? colors.primary.blue : colors.neutral.grafito40,
-  color: '#ffffff',
+  background: enabled ? colors.primary.yellow : colors.neutral.grafito40,
+  color: enabled ? colors.ui.textPrimary : '#ffffff',
   border: 'none',
-  borderRadius: 8,
+  borderRadius: radius.small,
   fontSize: typography.sizes.base,
-  fontWeight: 600,
+  fontWeight: 700,
   cursor: enabled ? 'pointer' : 'not-allowed',
 });
 
@@ -54,7 +56,7 @@ const buttonStyle = (enabled: boolean) => ({
  * `Login` (T-XXX "una sola URL" merged operator+supervisor entry) and is
  * passed down as `authToken`.
  */
-export function SessionSelect({ apiBaseUrl, authToken }: SessionSelectProps) {
+export function SessionSelect({ apiBaseUrl, authToken, onLogout }: SessionSelectProps) {
   const navigate = useNavigate();
 
   const [sessionOptions, setSessionOptions] = useState<SessionOption[]>([]);
@@ -98,43 +100,57 @@ export function SessionSelect({ apiBaseUrl, authToken }: SessionSelectProps) {
   };
 
   return (
-    <div style={{ padding: 24, maxWidth: 480, fontFamily: typography.fontFamily }}>
-      <h1 style={{ color: colors.primary.blue }}>Piscilago — Supervisor</h1>
+    <div style={{ minHeight: '100vh', fontFamily: typography.fontFamily }}>
+      <PageHeader title="Piscilago — Supervisor" actions={<HeaderLogoutButton onClick={onLogout} />} />
 
-      {loadError && <p style={{ color: colors.ui.error }}>{loadError}</p>}
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {sessionOptions.length === 0 ? (
-          <p style={{ color: colors.ui.textSecondary }}>No hay sesiones de conteo todavía.</p>
-        ) : (
-          <div>
-            <label htmlFor="session-select" style={{ display: 'block', marginBottom: 4 }}>
-              Sesión a revisar
-            </label>
-            <select
-              id="session-select"
-              value={selectedSessionId}
-              onChange={(event) => setSelectedSessionId(event.target.value)}
-              style={inputStyle}
-            >
-              {sessionOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.warehouse_code} · {SHIFT_LABELS[option.shift] ?? option.shift} ·{' '}
-                  {option.flagged_items} flaggeado(s)
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={handleOpenDashboard}
-          disabled={!selectedSessionId}
-          style={buttonStyle(!!selectedSessionId)}
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 16px' }}>
+        <div
+          style={{
+            width: '100%',
+            maxWidth: 480,
+            background: colors.ui.background,
+            borderRadius: radius.large,
+            padding: 28,
+            boxShadow: shadow.medium,
+            boxSizing: 'border-box',
+          }}
         >
-          Abrir dashboard
-        </button>
+          {loadError && <p style={{ color: colors.ui.error }}>{loadError}</p>}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {sessionOptions.length === 0 ? (
+              <p style={{ color: colors.ui.textSecondary }}>No hay sesiones de conteo todavía.</p>
+            ) : (
+              <div>
+                <label htmlFor="session-select" style={{ display: 'block', marginBottom: 4, fontWeight: 600, color: colors.ui.textPrimary }}>
+                  Sesión a revisar
+                </label>
+                <select
+                  id="session-select"
+                  value={selectedSessionId}
+                  onChange={(event) => setSelectedSessionId(event.target.value)}
+                  style={inputStyle}
+                >
+                  {sessionOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.warehouse_code} · {SHIFT_LABELS[option.shift] ?? option.shift} ·{' '}
+                      {option.flagged_items} flaggeado(s)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleOpenDashboard}
+              disabled={!selectedSessionId}
+              style={buttonStyle(!!selectedSessionId)}
+            >
+              Abrir dashboard
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

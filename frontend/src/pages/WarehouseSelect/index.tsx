@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { CountSessionProps } from '../CountSession';
-import { colors, touchTargets, typography } from '../../theme';
+import { HeaderLogoutButton, PageHeader } from '../../components/PageHeader';
+import { colors, radius, shadow, touchTargets, typography } from '../../theme';
 
 export interface WarehouseSelectProps {
   apiBaseUrl: string;
@@ -9,6 +10,7 @@ export interface WarehouseSelectProps {
   /** Already-authenticated — login happens once in `Login`, shared by both
    * the operator and supervisor flows (T-XXX "una sola URL"). */
   authToken: string;
+  onLogout: () => void;
 }
 
 interface WarehouseOption {
@@ -29,21 +31,21 @@ const inputStyle = {
   minHeight: touchTargets.minimum,
   fontSize: typography.sizes.base,
   fontFamily: typography.fontFamily,
-  padding: '8px 12px',
+  padding: '10px 12px',
   border: `1px solid ${colors.ui.border}`,
-  borderRadius: 8,
+  borderRadius: radius.small,
   width: '100%',
   boxSizing: 'border-box' as const,
 };
 
 const buttonStyle = (enabled: boolean) => ({
   minHeight: touchTargets.minimum,
-  background: enabled ? colors.primary.blue : colors.neutral.grafito40,
-  color: '#ffffff',
+  background: enabled ? colors.primary.yellow : colors.neutral.grafito40,
+  color: enabled ? colors.ui.textPrimary : '#ffffff',
   border: 'none',
-  borderRadius: 8,
+  borderRadius: radius.small,
   fontSize: typography.sizes.base,
-  fontWeight: 600,
+  fontWeight: 700,
   cursor: enabled ? 'pointer' : 'not-allowed',
 });
 
@@ -53,7 +55,7 @@ const buttonStyle = (enabled: boolean) => ({
  * real session_id. Login itself happens once in `Login` (T-XXX "una sola
  * URL" merged operator+supervisor entry) and is passed down as `authToken`.
  */
-export function WarehouseSelect({ apiBaseUrl, wsBaseUrl, authToken }: WarehouseSelectProps) {
+export function WarehouseSelect({ apiBaseUrl, wsBaseUrl, authToken, onLogout }: WarehouseSelectProps) {
   const navigate = useNavigate();
 
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
@@ -118,58 +120,72 @@ export function WarehouseSelect({ apiBaseUrl, wsBaseUrl, authToken }: WarehouseS
   };
 
   return (
-    <div style={{ padding: 24, maxWidth: 420, fontFamily: typography.fontFamily }}>
-      <h1 style={{ color: colors.primary.blue }}>Piscilago — Conteo de Inventario</h1>
+    <div style={{ minHeight: '100vh', fontFamily: typography.fontFamily }}>
+      <PageHeader title="Piscilago — Conteo de Inventario" actions={<HeaderLogoutButton onClick={onLogout} />} />
 
-      {loadError && <p style={{ color: colors.ui.error }}>{loadError}</p>}
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div>
-          <label htmlFor="warehouse-select" style={{ display: 'block', marginBottom: 4 }}>
-            Bodega
-          </label>
-          <select
-            id="warehouse-select"
-            value={selectedWarehouseId}
-            onChange={(event) => setSelectedWarehouseId(event.target.value)}
-            style={inputStyle}
-          >
-            {warehouses.map((warehouse) => (
-              <option key={warehouse.id} value={warehouse.id}>
-                {warehouse.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label htmlFor="shift-select" style={{ display: 'block', marginBottom: 4 }}>
-            Turno
-          </label>
-          <select
-            id="shift-select"
-            value={shift}
-            onChange={(event) => setShift(event.target.value as Shift)}
-            style={inputStyle}
-          >
-            {(Object.entries(SHIFT_LABELS) as [Shift, string][]).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {sessionError && <p style={{ color: colors.ui.error }}>{sessionError}</p>}
-
-        <button
-          type="button"
-          onClick={handleStartSession}
-          disabled={busy || !selectedWarehouseId}
-          style={buttonStyle(!busy && !!selectedWarehouseId)}
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 16px' }}>
+        <div
+          style={{
+            width: '100%',
+            maxWidth: 420,
+            background: colors.ui.background,
+            borderRadius: radius.large,
+            padding: 28,
+            boxShadow: shadow.medium,
+            boxSizing: 'border-box',
+          }}
         >
-          Iniciar conteo
-        </button>
+          {loadError && <p style={{ color: colors.ui.error }}>{loadError}</p>}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div>
+              <label htmlFor="warehouse-select" style={{ display: 'block', marginBottom: 4, fontWeight: 600, color: colors.ui.textPrimary }}>
+                Bodega
+              </label>
+              <select
+                id="warehouse-select"
+                value={selectedWarehouseId}
+                onChange={(event) => setSelectedWarehouseId(event.target.value)}
+                style={inputStyle}
+              >
+                {warehouses.map((warehouse) => (
+                  <option key={warehouse.id} value={warehouse.id}>
+                    {warehouse.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="shift-select" style={{ display: 'block', marginBottom: 4, fontWeight: 600, color: colors.ui.textPrimary }}>
+                Turno
+              </label>
+              <select
+                id="shift-select"
+                value={shift}
+                onChange={(event) => setShift(event.target.value as Shift)}
+                style={inputStyle}
+              >
+                {(Object.entries(SHIFT_LABELS) as [Shift, string][]).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {sessionError && <p style={{ color: colors.ui.error }}>{sessionError}</p>}
+
+            <button
+              type="button"
+              onClick={handleStartSession}
+              disabled={busy || !selectedWarehouseId}
+              style={buttonStyle(!busy && !!selectedWarehouseId)}
+            >
+              {busy ? 'Iniciando…' : 'Iniciar conteo'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

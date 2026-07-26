@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { colors, logos } from '../../theme';
+import { colors, radius, shadow } from '../../theme';
 import { BackToMenuButton } from '../../components/BackToMenuButton';
 import type { FlagType } from '../../components/FlagBadge';
+import { headerPrimaryButtonStyle, PageHeader } from '../../components/PageHeader';
 import type { TrafficLightColor } from '../../components/TrafficLight';
 import { handleUnauthorized } from '../../services/apiClient';
 import { BulkActionBar } from './BulkActionBar';
@@ -179,72 +180,64 @@ export function SupervisorDashboard({
   };
 
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ marginBottom: 16 }}>
-        <BackToMenuButton />
-      </div>
+    <div style={{ minHeight: '100vh' }}>
+      <PageHeader
+        title={`Supervisor — Bodega ${warehouseCode}`}
+        subtitle={`Turno ${shiftLabel}`}
+        actions={
+          <>
+            <BackToMenuButton variant="onDark" />
+            <button type="button" onClick={handleExport} disabled={exporting} style={headerPrimaryButtonStyle(!exporting)}>
+              {exporting ? 'Exportando…' : 'Exportar a Excel'}
+            </button>
+          </>
+        }
+      />
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <img src={logos.iconYellow} alt="" style={{ height: 32 }} />
-          <h1 style={{ color: colors.primary.blue }}>
-            Supervisor Dashboard — Bodega {warehouseCode} · Turno {shiftLabel}
-          </h1>
+      <div style={{ maxWidth: 960, margin: '0 auto', padding: '24px 16px' }}>
+        {exportError && <p style={{ color: colors.ui.error }}>{exportError}</p>}
+        {exportDone && (
+          <p role="status" style={{ color: colors.ui.success, fontWeight: 600 }}>
+            Exportación completada — descarga iniciada.
+          </p>
+        )}
+
+        <div style={{ background: colors.ui.background, borderRadius: radius.large, boxShadow: shadow.low, overflow: 'hidden' }}>
+          <div style={{ padding: '4px 16px 0' }}>
+            <BulkActionBar pendingCount={items.length} onApproveAll={approveAll} />
+          </div>
+
+          {loading ? (
+            <p style={{ padding: 24 }}>Cargando…</p>
+          ) : items.length === 0 ? (
+            <p style={{ padding: 24, textAlign: 'center', color: colors.ui.textSecondary }}>
+              No hay ítems marcados para revisar en esta sesión.
+            </p>
+          ) : (
+            // Narrow/tablet-portrait viewports: scroll the table horizontally
+            // instead of squeezing 5 columns (or letting them overflow the
+            // page) — the page itself must never scroll sideways.
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', minWidth: 640, borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', borderBottom: `2px solid ${colors.ui.border}`, background: colors.ui.surface }}>
+                    <th style={{ padding: 12 }}>Artículo</th>
+                    <th style={{ padding: 12 }}>Cant</th>
+                    <th style={{ padding: 12 }}>Flag</th>
+                    <th style={{ padding: 12 }}>Motivo</th>
+                    <th style={{ padding: 12 }}>Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item) => (
+                    <FlaggedItemRow key={item.itemId} item={item} onApprove={approveItem} onReject={rejectItem} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-        <button
-          type="button"
-          onClick={handleExport}
-          disabled={exporting}
-          style={{
-            minHeight: 48,
-            padding: '0 20px',
-            background: exporting ? colors.neutral.grafito40 : colors.primary.blue,
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: 8,
-            fontWeight: 600,
-            cursor: exporting ? 'not-allowed' : 'pointer',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {exporting ? 'Exportando…' : 'Exportar a Excel'}
-        </button>
       </div>
-
-      {exportError && <p style={{ color: colors.ui.error }}>{exportError}</p>}
-      {exportDone && (
-        <p role="status" style={{ color: colors.ui.success, fontWeight: 600 }}>
-          Exportación completada — descarga iniciada.
-        </p>
-      )}
-
-      <BulkActionBar pendingCount={items.length} onApproveAll={approveAll} />
-
-      {loading ? (
-        <p>Cargando…</p>
-      ) : (
-        // Narrow/tablet-portrait viewports: scroll the table horizontally
-        // instead of squeezing 5 columns (or letting them overflow the
-        // page) — the page itself must never scroll sideways.
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', minWidth: 640, borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: `2px solid ${colors.ui.border}` }}>
-                <th style={{ padding: 12 }}>Artículo</th>
-                <th style={{ padding: 12 }}>Cant</th>
-                <th style={{ padding: 12 }}>Flag</th>
-                <th style={{ padding: 12 }}>Motivo</th>
-                <th style={{ padding: 12 }}>Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => (
-                <FlaggedItemRow key={item.itemId} item={item} onApprove={approveItem} onReject={rejectItem} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   );
 }
