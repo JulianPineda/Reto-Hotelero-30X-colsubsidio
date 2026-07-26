@@ -12,18 +12,47 @@ for ANY operator_id + non-empty pin — enough to unblock every other
 JWT-gated endpoint for local dev, the demo, and tests — but it is NOT a
 real login and must not be mistaken for one before that business decision
 is made and a real credential store exists.
+
+RATE LIMITING: precisely because it accepts any credentials, this
+endpoint would otherwise mint unlimited valid tokens for free — an
+in-memory fixed-window limiter (per client IP) closes that off cheaply.
+In-memory means per-process and reset on restart, same caveat as
+exporter/router.py's in-memory `_JOBS` dict — a real deployment with
+multiple backend instances would need a shared store (Redis) instead.
 """
 from __future__ import annotations
 
+import time
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.config import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+_RATE_LIMIT_WINDOW_SECONDS = 60
+_RATE_LIMIT_MAX_ATTEMPTS = 10
+_login_attempts: dict[str, list[float]] = defaultdict(list)
+
+
+def _enforce_rate_limit(client_ip: str) -> None:
+    now = time.monotonic()
+    window_start = now - _RATE_LIMIT_WINDOW_SECONDS
+    recent = [t for t in _login_attempts[client_ip] if t > window_start]
+    if len(recent) >= _RATE_LIMIT_MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": "RATE_LIMITED",
+                "message": "Demasiados intentos de inicio de sesión. Intenta de nuevo en un minuto.",
+            },
+        )
+    recent.append(now)
+    _login_attempts[client_ip] = recent
 
 
 class LoginRequest(BaseModel):
@@ -38,7 +67,10 @@ class LoginResponse(BaseModel):
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(request: LoginRequest) -> LoginResponse:
+async def login(request: LoginRequest, http_request: Request) -> LoginResponse:
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    _enforce_rate_limit(client_ip)
+
     expires_delta = timedelta(minutes=settings.jwt_expire_minutes)
     expires_at = datetime.now(timezone.utc) + expires_delta
 

@@ -1,17 +1,21 @@
 """Parser Agent: extracts {article, quantity, unit} from a Spanish
-transcript using Gemini 1.5 Flash structured output (ADR-001 — replaces
-Claude Haiku, unifies the provider with the Voice Agent from T-005).
+transcript using Gemini structured output (ADR-001 — replaces Claude
+Haiku, unifies the provider with the Voice Agent from T-005).
 
 VERIFIED against https://ai.google.dev/api/generate-content (fetched
 2026-07-25): `client.models.generate_content` (and its async counterpart
 `client.aio.models.generate_content`, used below) is current and not
-deprecated — a newer "Interactions API" exists alongside it for newer
-models, but this classic method is still fully documented and supported.
-`system_instruction`, `response_mime_type` and `response_schema` inside
-`GenerateContentConfig` are exactly the documented shape — no changes
-needed. (Note: the docs' own examples now use "gemini-3.6-flash"; this file
-still pins "gemini-1.5-flash" per ADR-001's explicit decision — upgrading
-that is a product call, not something to change based on doc examples.)
+deprecated. `system_instruction`, `response_mime_type` and
+`response_schema` inside `GenerateContentConfig` are exactly the
+documented shape — no changes needed.
+
+MODEL NAME — CONFIRMED against the real API with a live key (2026-07-25):
+`gemini-1.5-flash` (ADR-001's original pin) no longer exists —
+`client.models.list()` 404s it outright ("not found for API version
+v1beta, or is not supported for generateContent"). `gemini-3.6-flash`
+(the version the docs' examples already pointed to) IS present in that
+same live listing with `generateContent` support, so this is a forced
+correction, not a preference swap.
 """
 from __future__ import annotations
 
@@ -21,7 +25,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 
-MODEL_NAME = "gemini-1.5-flash"
+MODEL_NAME = "gemini-3.6-flash"
 
 SYSTEM_PROMPT = """\
 Eres un extractor de datos de inventario de un parque de recreación colombiano (Piscilago).

@@ -1,15 +1,16 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { CountSession, type CountSessionProps } from './pages/CountSession';
-import { SupervisorDashboard } from './pages/SupervisorDashboard';
+import { SessionSelect } from './pages/SessionSelect';
+import { SupervisorDashboard, type SupervisorDashboardProps } from './pages/SupervisorDashboard';
 import { WarehouseSelect } from './pages/WarehouseSelect';
 
-// App shell: WarehouseSelect (login + bodega/turno) hands its result to
-// CountSession via router state, so /count has no meaning on its own —
-// visiting it directly (refresh, bookmark) bounces back to /select rather
-// than falling back to stale demo props. SupervisorDashboard (T-015) still
-// uses fixed demo props — it has no equivalent "which session am I
-// reviewing" picker yet. ExportPreview (referenced in the project layout)
-// has no component yet — UI Expert scope beyond what's been implemented here.
+// App shell: both operator and supervisor flows start with a login +
+// picker page (WarehouseSelect / SessionSelect) that hands its result to
+// the actual work page via router state — /count and /supervisor have no
+// meaning on their own, so visiting either directly (refresh, bookmark)
+// bounces back to its picker instead of falling back to stale demo props.
+// ExportPreview (referenced in the project layout) has no component yet —
+// UI Expert scope beyond what's been implemented here.
 function CountSessionRoute() {
   const location = useLocation();
   const state = location.state as CountSessionProps | null;
@@ -18,6 +19,16 @@ function CountSessionRoute() {
     return <Navigate to="/select" replace />;
   }
   return <CountSession {...state} />;
+}
+
+function SupervisorDashboardRoute() {
+  const location = useLocation();
+  const state = location.state as SupervisorDashboardProps | null;
+
+  if (state === null) {
+    return <Navigate to="/supervisor-login" replace />;
+  }
+  return <SupervisorDashboard {...state} />;
 }
 
 export default function App() {
@@ -29,18 +40,8 @@ export default function App() {
       <Routes>
         <Route path="/select" element={<WarehouseSelect apiBaseUrl={apiBaseUrl} wsBaseUrl={wsBaseUrl} />} />
         <Route path="/count" element={<CountSessionRoute />} />
-        <Route
-          path="/supervisor"
-          element={
-            <SupervisorDashboard
-              sessionId="demo-session"
-              warehouseCode="PSL-ALMACEN-GENERAL"
-              shiftLabel="Mañana"
-              apiBaseUrl={apiBaseUrl}
-              authToken=""
-            />
-          }
-        />
+        <Route path="/supervisor-login" element={<SessionSelect apiBaseUrl={apiBaseUrl} />} />
+        <Route path="/supervisor" element={<SupervisorDashboardRoute />} />
         <Route path="*" element={<Navigate to="/select" replace />} />
       </Routes>
     </BrowserRouter>

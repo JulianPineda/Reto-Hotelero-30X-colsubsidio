@@ -16,6 +16,7 @@ export interface UseVoiceSessionResult {
   stopPTT: () => void;
   confirm: (value: boolean) => void;
   bargeIn: () => void;
+  resetToIdle: () => void;
 }
 
 /**
@@ -123,5 +124,14 @@ export function useVoiceSession(wsUrl: string): UseVoiceSessionResult {
     send({ type: 'barge_in' });
   }, [send]);
 
-  return { uiState, startPTT, stopPTT, confirm, bargeIn };
+  /** After `manual_fallback` (3 failed voice attempts), the operator
+   * submits that one item via `submitManualFallbackItem` (a plain REST
+   * call — see offlineSync.ts) instead of anything going through this WS
+   * session, so nothing server-side ever moves the phase back off
+   * `manual_fallback` on its own. */
+  const resetToIdle = useCallback(() => {
+    dispatch({ type: 'client_reset' });
+  }, []);
+
+  return { uiState, startPTT, stopPTT, confirm, bargeIn, resetToIdle };
 }

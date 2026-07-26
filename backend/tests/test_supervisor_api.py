@@ -33,12 +33,24 @@ def _make_item(**overrides) -> SimpleNamespace:
     return SimpleNamespace(**defaults)
 
 
+class _FakeExecResult:
+    def __init__(self, scalar_value):
+        self._scalar_value = scalar_value
+
+    def scalar(self):
+        return self._scalar_value
+
+
 class _FakeSession:
-    def __init__(self, items: dict, count_sessions: dict):
+    def __init__(self, items: dict, count_sessions: dict, pending_flagged_count: int = 0):
         self._items = items
         self._count_sessions = count_sessions
         self.added: list = []
         self.committed = False
+        # Feeds `can_export()`'s query inside `_maybe_mark_approved` —
+        # defaults to 0 ("nothing left pending") since every test below
+        # resolves every flagged item it creates.
+        self._pending_flagged_count = pending_flagged_count
 
     async def get(self, model, pk):
         if model is CountItem:
@@ -55,6 +67,9 @@ class _FakeSession:
 
     async def commit(self) -> None:
         self.committed = True
+
+    async def execute(self, *_args, **_kwargs):
+        return _FakeExecResult(self._pending_flagged_count)
 
 
 def _events_of_type(session: _FakeSession, event_type: EventType):
@@ -146,6 +161,47 @@ async def test_bulk_approve_skips_items_from_other_sessions():
     assert item_in_other_session.is_approved is None
 
 
+async def test_approve_marks_session_approved_when_nothing_else_pending():
+    item = _make_item()
+    count_session = SimpleNamespace(warehouse_id=uuid.uuid4(), status="pending_review")
+    session = _FakeSession(
+        items={item.id: item},
+        count_sessions={item.session_id: count_session},
+        pending_flagged_count=0,
+    )
+
+    await supervisor.approve_item(
+        item.id, supervisor.ApproveRequest(corrected_quantity=None), session=session, _operator=None
+    )
+
+    assert count_session.status == "approved"
+
+
+async def test_approve_leaves_session_status_alone_when_others_still_pending():
+    item = _make_item()
+    count_session = SimpleNamespace(warehouse_id=uuid.uuid4(), status="pending_review")
+    session = _FakeSession(
+        items={item.id: item},
+        count_sessions={item.session_id: count_session},
+        pending_flagged_count=1,  # another flagged item in the session is still unresolved
+    )
+
+    await supervisor.approve_item(
+        item.id, supervisor.ApproveRequest(corrected_quantity=None), session=session, _operator=None
+    )
+
+    assert count_session.status == "pending_review"
+
+
+async def test_maybe_mark_approved_never_downgrades_an_exported_session():
+    count_session = SimpleNamespace(warehouse_id=uuid.uuid4(), status="exported")
+    session = _FakeSession(items={}, count_sessions={"s1": count_session}, pending_flagged_count=0)
+
+    await supervisor._maybe_mark_approved(session, "s1")
+
+    assert count_session.status == "exported"
+
+
 def test_sort_key_prioritizes_red_perishables_first():
     red_perishable_item = _make_item(traffic_light="red", flag_type="trend")
     catalog_perishable = SimpleNamespace(is_perishable=True)
@@ -156,14 +212,6 @@ def test_sort_key_prioritizes_red_perishables_first():
     ordered = sorted(rows, key=supervisor._sort_key)
 
     assert ordered[0][0] is red_perishable_item
-
-
-class _FakeExecResult:
-    def __init__(self, scalar_value):
-        self._scalar_value = scalar_value
-
-    def scalar(self):
-        return self._scalar_value
 
 
 class _FakeExportGateSession:

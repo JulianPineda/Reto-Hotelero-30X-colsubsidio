@@ -134,6 +134,7 @@ async def _run_export_job(job_id: UUID, session_id: UUID, export_format: str) ->
 
             count_session.exported_at = export_timestamp
             count_session.export_path = str(export_path)
+            count_session.status = "exported"
             await session.commit()
 
             flagged_excluded = (

@@ -112,6 +112,21 @@ async def _warehouse_id_for_item(session: AsyncSession, item: CountItem) -> UUID
     return count_session.warehouse_id
 
 
+async def _maybe_mark_approved(session: AsyncSession, session_id: UUID) -> None:
+    """Session-status half of CLAUDE.md's lifecycle this codebase never
+    enforced (see `api/sessions.py::complete_session`'s docstring) —
+    once every flagged item has a non-null `is_approved`, the session is
+    ready to export. Doesn't require `complete_session` to have run first:
+    the existing E2E test approves items while status is still
+    'in_progress', and nothing in any ticket said resolution must wait for
+    an explicit "finish counting" step."""
+    if not await can_export(session_id, session):
+        return
+    count_session = await session.get(CountSession, session_id)
+    if count_session is not None and count_session.status not in ("approved", "exported"):
+        count_session.status = "approved"
+
+
 @router.post("/items/{item_id}/approve")
 async def approve_item(
     item_id: UUID,
@@ -141,6 +156,7 @@ async def approve_item(
         warehouse_id=await _warehouse_id_for_item(session, item),
         created_by="supervisor",
     )
+    await _maybe_mark_approved(session, item.session_id)
     await session.commit()
     return {"item_id": str(item.id), "is_approved": True}
 
@@ -172,6 +188,7 @@ async def reject_item(
         warehouse_id=await _warehouse_id_for_item(session, item),
         created_by="supervisor",
     )
+    await _maybe_mark_approved(session, item.session_id)
     await session.commit()
     return {"item_id": str(item.id), "is_approved": False}
 
@@ -207,6 +224,7 @@ async def bulk_approve(
         )
         approved_ids.append(item.id)
 
+    await _maybe_mark_approved(session, session_id)
     await session.commit()
     return {"approved_item_ids": [str(i) for i in approved_ids]}
 

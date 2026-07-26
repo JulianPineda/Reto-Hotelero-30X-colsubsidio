@@ -8,7 +8,12 @@ import { TrafficLight } from '../../components/TrafficLight';
 import { VoiceButton, type VoiceButtonPhase } from '../../components/VoiceButton';
 import { useVoiceSession } from '../../hooks/useVoiceSession';
 import { enqueueOfflineItem } from '../../services/offlineQueue';
-import { syncOfflineQueue, type SyncContext } from '../../services/offlineSync';
+import {
+  PersistCountItemError,
+  submitManualFallbackItem,
+  syncOfflineQueue,
+  type SyncContext,
+} from '../../services/offlineSync';
 import { useSessionStore } from '../../store/sessionStore';
 import { colors, typography } from '../../theme';
 
@@ -50,9 +55,10 @@ export function CountSession({
   const items = useSessionStore((state) => state.items);
   const isOffline = useSessionStore((state) => state.isOffline);
   const setOffline = useSessionStore((state) => state.setOffline);
-  const { uiState, startPTT, stopPTT, confirm } = useVoiceSession(wsUrl);
+  const { uiState, startPTT, stopPTT, confirm, resetToIdle } = useVoiceSession(wsUrl);
 
   const [reviewRefreshKey, setReviewRefreshKey] = useState(0);
+  const [manualFallbackError, setManualFallbackError] = useState<string | null>(null);
   const wasOfflineRef = useRef(false);
 
   const syncCtx: SyncContext = { apiBaseUrl, authToken, warehouseId, shift };
@@ -88,6 +94,32 @@ export function CountSession({
 
   const handleManualSubmit = async (values: { article: string; quantity: number; unit: string; expiryDate: string | null }) => {
     await enqueueOfflineItem({ sessionId, article: values.article, quantity: values.quantity, unit: values.unit, expiryDate: values.expiryDate });
+  };
+
+  /** T-006's per-item manual fallback (3 failed voice attempts) — unlike
+   * offline capture this submits immediately (we're online, only the STT
+   * failed), then returns the PTT loop to idle so the operator can go
+   * back to voice for the next item. */
+  const handleManualFallbackSubmit = async (values: {
+    article: string;
+    quantity: number;
+    unit: string;
+    expiryDate: string | null;
+  }) => {
+    setManualFallbackError(null);
+    try {
+      await submitManualFallbackItem(
+        { sessionId, article: values.article, quantity: values.quantity, unit: values.unit, expiryDate: values.expiryDate },
+        syncCtx,
+      );
+      resetToIdle();
+    } catch (err) {
+      if (err instanceof PersistCountItemError && err.errorCode === 'EXPIRY_DATE_REQUIRED') {
+        setManualFallbackError('Este artículo es perecedero — agrega la fecha de vencimiento e intenta de nuevo.');
+      } else {
+        setManualFallbackError('No se pudo guardar el ítem. Intenta de nuevo.');
+      }
+    }
   };
 
   const buttonPhase: VoiceButtonPhase = isOffline
@@ -128,6 +160,11 @@ export function CountSession({
 
       {isOffline ? (
         <ManualEntryForm onSubmit={handleManualSubmit} />
+      ) : uiState.phase === 'manual_fallback' ? (
+        <>
+          {manualFallbackError && <p style={{ color: colors.ui.error }}>{manualFallbackError}</p>}
+          <ManualEntryForm onSubmit={handleManualFallbackSubmit} />
+        </>
       ) : (
         <>
           {!dialogsBlockVoice && (

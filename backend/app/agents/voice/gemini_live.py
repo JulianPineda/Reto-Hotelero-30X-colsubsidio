@@ -16,15 +16,22 @@ https://ai.google.dev/gemini-api/docs/live-guide (fetched 2026-07-25):
   fragments until the turn completes).
 
 TTS CONFIRMATION READBACK (added from a working browser-side reference the
-user supplied — its `sendRealtimeInput({text})` / `serverContent.modelTurn
-.parts[0].inlineData` / `outputAudioTranscription` shapes cross-checked
-against this file's already-verified `send_realtime_input(audio=...)` /
-`input_transcription` patterns): `session.send_realtime_input(text=...)` is
-inferred by symmetry with the audio call above, NOT independently
-re-verified against docs this session — flag if Gemini rejects it.
-Also adopts that reference's model name (`gemini-3.1-flash-live-preview`),
-confirmed working there, replacing this file's previous placeholder
-("confirmar variante Live disponible al implementar").
+user supplied, then corrected against a real live connection with a real
+API key on 2026-07-25): the reference's `sendRealtimeInput({text})` does
+NOT reliably trigger a spoken reply — confirmed by testing it directly:
+`connect()` succeeded, `speak()` returned with no error, but zero audio
+chunks ever arrived. Inspecting the installed SDK's own docstrings
+explains why: `send_realtime_input` is "optimized for responsiveness at
+the expense of deterministic ordering" (built for continuous audio/video
++ VAD, not one-shot turn-based prompting), while `send_client_content(
+turns=..., turn_complete=True)` is explicitly documented as "non-realtime,
+turn based content" where "the model will reply immediately" once
+`turn_complete=True` — exactly what a confirmation readback needs. `speak()`
+now uses `send_client_content`. Also adopts the reference's model name
+(`gemini-3.1-flash-live-preview`) — confirmed present in this key's own
+`client.models.list()` output with `bidiGenerateContent` support, replacing
+this file's previous placeholder ("confirmar variante Live disponible al
+implementar").
 
 NOTE ON WHY THIS FILE OWNS ONE CONTINUOUS READER: `self._session.receive()`
 is one bidirectional stream carrying BOTH input transcription and output
@@ -42,6 +49,22 @@ input transcription (confirmed above) — this isn't a bug to patch, it's a
 capability gap in the provider ADR-001 chose. `TranscriptEvent.confidence`
 is always None here; `voice/session.py`'s threshold check against it needs
 a product decision (see the summary sent alongside the original fix).
+
+AUDIO-LESS TURN FLAKINESS (confirmed 2026-07-25, root-caused with a real
+billed key): `speak()` initially appeared to never deliver audio through
+`receive_audio()`. Bypassing this class entirely with a raw diagnostic
+script proved the SDK/config are correct — the SAME connection, SAME
+`send_client_content` call, run 10 times back-to-back, produced a full
+~21-message response (real `inline_data` PCM chunks) in 6 runs and, in the
+other 4, only 4 messages: `output_transcription` (the full text, as a
+single non-streamed chunk) immediately followed by `generation_complete`
+and `turn_complete` — `usage_metadata` confirms 0 audio response tokens
+were generated that turn. This is the Gemini preview model itself
+sometimes silently skipping audio synthesis for a turn, not a bug in this
+file's single-reader `_drain()` loop (which was the original suspect and
+is confirmed innocent — it faithfully receives however many messages
+Gemini actually sends). Fixed with a bounded retry in `speak()`: resend
+the same turn if it completes with zero audio bytes received.
 """
 from __future__ import annotations
 
@@ -57,6 +80,10 @@ from app.agents.voice.stt_provider import STTProvider
 from app.config import settings
 
 MODEL_NAME = "gemini-3.1-flash-live-preview"  # ADR-001 — from a confirmed-working reference (see module docstring)
+
+# speak() retry tuning — see "AUDIO-LESS TURN FLAKINESS" in the module docstring.
+_SPEAK_MAX_ATTEMPTS = 3
+_SPEAK_TURN_TIMEOUT_SECONDS = 8.0
 
 # Keeps the model a pure text-to-speech reader for our own confirmation
 # strings, not a chatty assistant — the browser-side reference this was
@@ -79,6 +106,10 @@ class GeminiLiveSTTProvider(STTProvider):
         self._transcript_queue: asyncio.Queue[TranscriptEvent | None] = asyncio.Queue()
         self._audio_queue: asyncio.Queue[str] = asyncio.Queue()
         self._drain_task: asyncio.Task[None] | None = None
+        # Per-turn bookkeeping for speak()'s retry-on-silent-turn logic
+        # (see module docstring, "AUDIO-LESS TURN FLAKINESS").
+        self._turn_complete_event: asyncio.Event = asyncio.Event()
+        self._turn_had_audio: bool = False
 
     async def connect(self, session_config: SessionConfig) -> None:
         live_config = types.LiveConnectConfig(
@@ -127,6 +158,7 @@ class GeminiLiveSTTProvider(STTProvider):
                     inline_data = getattr(part, "inline_data", None)
                     raw = getattr(inline_data, "data", None) if inline_data is not None else None
                     if raw:
+                        self._turn_had_audio = True
                         await self._audio_queue.put(base64.b64encode(raw).decode("ascii"))
 
                 if getattr(server_content, "turn_complete", False):
@@ -134,6 +166,7 @@ class GeminiLiveSTTProvider(STTProvider):
                         TranscriptEvent(type=TranscriptEventType.FINAL, text=accumulated_text, confidence=None)
                     )
                     accumulated_text = ""
+                    self._turn_complete_event.set()
         finally:
             await self._transcript_queue.put(None)
 
@@ -145,9 +178,27 @@ class GeminiLiveSTTProvider(STTProvider):
         )
 
     async def speak(self, text: str) -> None:
+        """Sends `text` as a turn for Gemini to read aloud. Retries the same
+        turn (up to `_SPEAK_MAX_ATTEMPTS` times) if it completes without
+        producing any audio — see module docstring, "AUDIO-LESS TURN
+        FLAKINESS": the model occasionally completes a turn with only a
+        text transcription and zero audio response tokens."""
         if self._session is None:
             raise RuntimeError("call connect() before speak()")
-        await self._session.send_realtime_input(text=text)
+
+        for attempt in range(1, _SPEAK_MAX_ATTEMPTS + 1):
+            self._turn_complete_event.clear()
+            self._turn_had_audio = False
+            await self._session.send_client_content(
+                turns=types.Content(role="user", parts=[types.Part(text=text)]),
+                turn_complete=True,
+            )
+            try:
+                await asyncio.wait_for(self._turn_complete_event.wait(), timeout=_SPEAK_TURN_TIMEOUT_SECONDS)
+            except TimeoutError:
+                return
+            if self._turn_had_audio or attempt == _SPEAK_MAX_ATTEMPTS:
+                return
 
     async def receive(self) -> AsyncIterator[TranscriptEvent]:
         if self._session is None:

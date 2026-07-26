@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { colors } from '../../theme';
 import type { FlagType } from '../../components/FlagBadge';
 import type { TrafficLightColor } from '../../components/TrafficLight';
+import { handleUnauthorized } from '../../services/apiClient';
 import { BulkActionBar } from './BulkActionBar';
 import { FlaggedItemRow, type FlaggedItem } from './FlaggedItemRow';
 
@@ -65,6 +66,7 @@ export function SupervisorDashboard({
     const response = await fetch(`${apiBaseUrl}/supervisor/sessions/${sessionId}/flagged-items`, {
       headers: authHeaders,
     });
+    if (handleUnauthorized(response, '/supervisor-login')) return;
     const data: RawFlaggedItem[] = await response.json();
     setItems(data.map(mapRawItem));
     setLoading(false);
@@ -76,29 +78,32 @@ export function SupervisorDashboard({
   }, [fetchItems]);
 
   const approveItem = async (itemId: string, correctedQuantity: number | null) => {
-    await fetch(`${apiBaseUrl}/supervisor/items/${itemId}/approve`, {
+    const response = await fetch(`${apiBaseUrl}/supervisor/items/${itemId}/approve`, {
       method: 'POST',
       headers: authHeaders,
       body: JSON.stringify({ corrected_quantity: correctedQuantity }),
     });
+    if (handleUnauthorized(response, '/supervisor-login')) return;
     await fetchItems();
   };
 
   const rejectItem = async (itemId: string, reason: string) => {
-    await fetch(`${apiBaseUrl}/supervisor/items/${itemId}/reject`, {
+    const response = await fetch(`${apiBaseUrl}/supervisor/items/${itemId}/reject`, {
       method: 'POST',
       headers: authHeaders,
       body: JSON.stringify({ reason }),
     });
+    if (handleUnauthorized(response, '/supervisor-login')) return;
     await fetchItems();
   };
 
   const approveAll = async () => {
-    await fetch(`${apiBaseUrl}/supervisor/sessions/${sessionId}/bulk-approve`, {
+    const response = await fetch(`${apiBaseUrl}/supervisor/sessions/${sessionId}/bulk-approve`, {
       method: 'POST',
       headers: authHeaders,
       body: JSON.stringify({ item_ids: items.map((item) => item.itemId) }),
     });
+    if (handleUnauthorized(response, '/supervisor-login')) return;
     await fetchItems();
   };
 

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { CountSessionProps } from '../CountSession';
+import { login } from '../../services/auth';
 import { colors, touchTargets, typography } from '../../theme';
 
 export interface WarehouseSelectProps {
@@ -70,13 +71,7 @@ export function WarehouseSelect({ apiBaseUrl, wsBaseUrl }: WarehouseSelectProps)
     setLoginError(null);
     setBusy(true);
     try {
-      const loginResponse = await fetch(`${apiBaseUrl}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ operator_id: operatorId, pin }),
-      });
-      if (!loginResponse.ok) throw new Error('login_failed');
-      const { access_token: token } = await loginResponse.json();
+      const token = await login(apiBaseUrl, operatorId, pin);
 
       const warehousesResponse = await fetch(`${apiBaseUrl}/warehouses`, {
         headers: { Authorization: `Bearer ${token}` },

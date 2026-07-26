@@ -37,9 +37,12 @@ export type ServerMessage =
   // something that changes VoiceUIState's phase.
   | { type: 'audio_out'; data: string };
 
-/** Client-originated pseudo-event — `ptt_stop` moves the UI to "processing"
- * immediately, without waiting for the server round-trip. */
-export type ClientEvent = { type: 'client_processing' };
+/** Client-originated pseudo-events — `ptt_stop` moves the UI to
+ * "processing" immediately without waiting for the server round-trip;
+ * `client_reset` returns to idle after a successful manual-fallback
+ * submission (there's no server message for this — the submission goes
+ * straight to `POST /count-items`, bypassing the WS session entirely). */
+export type ClientEvent = { type: 'client_processing' } | { type: 'client_reset' };
 
 export type VoiceEvent = ServerMessage | ClientEvent;
 
@@ -60,6 +63,8 @@ export function reduceVoiceEvent(state: VoiceUIState, event: VoiceEvent): VoiceU
   switch (event.type) {
     case 'client_processing':
       return { phase: 'processing' };
+    case 'client_reset':
+      return { phase: 'idle' };
     case 'listening':
       return { phase: 'listening' };
     case 'confirmation_request':

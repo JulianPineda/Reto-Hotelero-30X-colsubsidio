@@ -46,6 +46,21 @@ beforeEach(() => {
 });
 
 describe('useVoiceSession', () => {
+  it('resetToIdle returns the phase to idle from manual_fallback', () => {
+    const { result } = renderHook(() => useVoiceSession('ws://test/voice/demo'));
+    const ws = FakeWebSocket.instances[0];
+
+    act(() => {
+      ws.emit({ type: 'manual_fallback_offered' });
+    });
+    expect(result.current.uiState.phase).toBe('manual_fallback');
+
+    act(() => {
+      result.current.resetToIdle();
+    });
+    expect(result.current.uiState.phase).toBe('idle');
+  });
+
   it('sends barge_in then ptt_start on startPTT, stopping any playing audio', () => {
     const { result } = renderHook(() => useVoiceSession('ws://test/voice/demo'));
     const ws = FakeWebSocket.instances[0];

@@ -11,6 +11,11 @@ describe('reduceVoiceEvent', () => {
     expect(result).toEqual({ phase: 'processing' });
   });
 
+  it('client_reset returns to idle from manual_fallback', () => {
+    const result = reduceVoiceEvent({ phase: 'manual_fallback' }, { type: 'client_reset' });
+    expect(result).toEqual({ phase: 'idle' });
+  });
+
   it('listening moves to listening', () => {
     const result = reduceVoiceEvent({ phase: 'processing' }, { type: 'listening' });
     expect(result).toEqual({ phase: 'listening' });

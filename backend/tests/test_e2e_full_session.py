@@ -244,6 +244,9 @@ async def test_full_session_happy_path():
         assert item_trend.is_approved is False
         assert await supervisor.can_export(count_session.id, db) is True
 
+        await db.refresh(count_session)
+        assert count_session.status == "approved"
+
         # --- 7. Exportar ---
         await validate_can_export(count_session.id, db)  # no debe lanzar
 
@@ -254,6 +257,7 @@ async def test_full_session_happy_path():
 
         await db.refresh(count_session)
         assert count_session.exported_at is not None
+        assert count_session.status == "exported"
 
         exported_path = Path(count_session.export_path)
         csv_content = exported_path.read_text(encoding="utf-8")
