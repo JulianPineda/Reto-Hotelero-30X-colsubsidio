@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { SessionSelect } from '../SessionSelect';
 import { WarehouseSelect } from '../WarehouseSelect';
+import { BrandRibbon } from '../../components/BrandRibbon';
+import { OptionsRibbon } from '../../components/OptionsRibbon';
 import { clearStoredSession, getStoredSession, login, storeSession, type Role } from '../../services/auth';
-import { colors, gradients, logos, radius, shadow, touchTargets, typography } from '../../theme';
+import { colors, radius, shadow, touchTargets, typography } from '../../theme';
 
 export interface LoginProps {
   apiBaseUrl: string;
@@ -37,23 +39,6 @@ const buttonStyle = (enabled: boolean) => ({
   boxShadow: enabled ? '0 2px 8px rgba(255, 208, 0, 0.35)' : 'none',
   transition: 'transform 0.1s ease, box-shadow 0.15s ease',
 });
-
-/** Colsubsidio lockup on the brand-blue header — CLAUDE.md §2: the white
- * lockup is only ever used on a colored/dark background, never white. */
-function BrandHeader() {
-  return (
-    <div
-      style={{
-        background: gradients.brandBlue,
-        padding: '28px 24px',
-        display: 'flex',
-        justifyContent: 'center',
-      }}
-    >
-      <img src={logos.fullWhite} alt="Colsubsidio" style={{ height: 40 }} />
-    </div>
-  );
-}
 
 /**
  * Single entry point for both the operator and supervisor flows (previously
@@ -106,7 +91,8 @@ export function Login({ apiBaseUrl, wsBaseUrl }: LoginProps) {
 
   return (
     <div style={{ minHeight: '100vh', background: colors.ui.surface, fontFamily: typography.fontFamily }}>
-      <BrandHeader />
+      <BrandRibbon />
+      <OptionsRibbon greeting="Bienvenido al sistema de Control de Inventario Piscilago." />
       <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 16px' }}>
         <div
           style={{

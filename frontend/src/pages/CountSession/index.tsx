@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BackToMenuButton } from '../../components/BackToMenuButton';
+import { useNavigate } from 'react-router-dom';
+import { BrandRibbon } from '../../components/BrandRibbon';
 import { ConfirmDialog } from '../../components/ConfirmDialog/ConfirmDialog';
 import { ExpiryConfirmDialog } from '../../components/ExpiryConfirmDialog';
+import { CheckCircleIcon, ExportIcon, HomeIcon } from '../../components/icons';
 import { ManualEntryForm } from '../../components/ManualEntryForm';
 import { OfflineBanner } from '../../components/OfflineBanner';
 import { OfflineReviewList } from '../../components/OfflineReviewList';
-import { headerPrimaryButtonStyle, PageHeader } from '../../components/PageHeader';
+import { OptionsRibbon, type RibbonAction } from '../../components/OptionsRibbon';
 import { TrafficLight } from '../../components/TrafficLight';
 import { VoiceButton, type VoiceButtonPhase } from '../../components/VoiceButton';
 import { useVoiceSession } from '../../hooks/useVoiceSession';
@@ -54,6 +56,7 @@ export function CountSession({
   shift,
   shiftLabel,
 }: CountSessionProps) {
+  const navigate = useNavigate();
   const items = useSessionStore((state) => state.items);
   const isOffline = useSessionStore((state) => state.isOffline);
   const setOffline = useSessionStore((state) => state.setOffline);
@@ -67,6 +70,7 @@ export function CountSession({
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
+  const [showExportHandoffNote, setShowExportHandoffNote] = useState(false);
   const wasOfflineRef = useRef(false);
 
   /** T-XXX: operators had no way to signal "done counting" — the session
@@ -174,6 +178,10 @@ export function CountSession({
     } catch (err) {
       if (err instanceof PersistCountItemError && err.errorCode === 'EXPIRY_DATE_REQUIRED') {
         setManualFallbackError('Este artículo es perecedero — agrega la fecha de vencimiento e intenta de nuevo.');
+      } else if (err instanceof PersistCountItemError && err.errorCode === 'UNIT_MISMATCH') {
+        setManualFallbackError(
+          'La unidad indicada no es compatible con este producto — verifica si es un producto sólido/al peso (kg, g, lb, unidad) o líquido (L, mL, gal) e intenta de nuevo.',
+        );
       } else {
         setManualFallbackError('No se pudo guardar el ítem. Intenta de nuevo.');
       }

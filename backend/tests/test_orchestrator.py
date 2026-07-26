@@ -11,6 +11,7 @@ from app.schemas.events import EventType
 from app.services import orchestrator
 from app.services.orchestrator import SessionNotFoundError, UnknownOracleCodeError, persist_count_item
 from app.services.perishables import PerishableItemMissingExpiryError
+from app.services.unit_compatibility import IncompatibleUnitError
 
 
 class _FakeResult:
@@ -211,7 +212,7 @@ async def test_sin_homologar_item_skips_the_auditor(monkeypatch):
 
 async def test_perishable_item_computes_traffic_light(monkeypatch):
     count_session = _count_session()
-    catalog_item = _catalog_item(oracle_code="LAC-001", name="Leche Entera 1L", is_perishable=True)
+    catalog_item = _catalog_item(oracle_code="LAC-001", name="Leche Entera 1L", unit="L", is_perishable=True)
     session = _FakeSession(count_session, _responses_with_catalog_lookup(catalog_item, max_sequence=0))
 
     async def fake_run_audit(_session, _request):
@@ -240,7 +241,7 @@ async def test_perishable_item_computes_traffic_light(monkeypatch):
 
 async def test_perishable_item_missing_expiry_date_raises(monkeypatch):
     count_session = _count_session()
-    catalog_item = _catalog_item(oracle_code="LAC-001", name="Leche Entera 1L", is_perishable=True)
+    catalog_item = _catalog_item(oracle_code="LAC-001", name="Leche Entera 1L", unit="L", is_perishable=True)
     # Raises right after the CatalogItem lookup, before the sequence-max
     # query ever runs — only one response needed.
     session = _FakeSession(count_session, [_FakeResult(catalog_item)])
@@ -266,6 +267,94 @@ async def test_perishable_item_missing_expiry_date_raises(monkeypatch):
             confidence_stt=None,
             created_by="OP-1",
         )
+
+
+async def test_liquid_item_rejects_mass_unit(monkeypatch):
+    count_session = _count_session()
+    catalog_item = _catalog_item(oracle_code="LAC-001", name="Leche Entera 1L", unit="L")
+    # Raises right after the CatalogItem lookup, before the sequence-max
+    # query ever runs — only one response needed.
+    session = _FakeSession(count_session, [_FakeResult(catalog_item)])
+
+    async def fake_run_audit(_session, _request):
+        return _no_flag_audit_result()
+
+    monkeypatch.setattr(orchestrator, "run_audit", fake_run_audit)
+
+    with pytest.raises(IncompatibleUnitError):
+        await persist_count_item(
+            session,
+            session_id=count_session.id,
+            oracle_code="LAC-001",
+            article_name="Leche Entera 1L",
+            raw_transcript=None,
+            quantity=2.0,
+            unit="kg",
+            homologation_score=0.9,
+            sin_homologar=False,
+            expiry_date=None,
+            is_offline=False,
+            confidence_stt=None,
+            created_by="OP-1",
+        )
+
+
+async def test_solid_item_rejects_volume_unit(monkeypatch):
+    count_session = _count_session()
+    catalog_item = _catalog_item(oracle_code="HAR-001", name="Harina de Trigo Especial 50kg", unit="kg")
+    session = _FakeSession(count_session, [_FakeResult(catalog_item)])
+
+    async def fake_run_audit(_session, _request):
+        return _no_flag_audit_result()
+
+    monkeypatch.setattr(orchestrator, "run_audit", fake_run_audit)
+
+    with pytest.raises(IncompatibleUnitError):
+        await persist_count_item(
+            session,
+            session_id=count_session.id,
+            oracle_code="HAR-001",
+            article_name="Harina de Trigo Especial 50kg",
+            raw_transcript=None,
+            quantity=2.0,
+            unit="L",
+            homologation_score=0.9,
+            sin_homologar=False,
+            expiry_date=None,
+            is_offline=False,
+            confidence_stt=None,
+            created_by="OP-1",
+        )
+
+
+async def test_solid_item_allows_count_unit(monkeypatch):
+    """Sólidos/al peso también admiten 'por unidad/pieza' — no solo masa."""
+    count_session = _count_session()
+    catalog_item = _catalog_item(oracle_code="HAR-001", name="Harina de Trigo Especial 50kg", unit="kg")
+    session = _FakeSession(count_session, _responses_with_catalog_lookup(catalog_item, max_sequence=0))
+
+    async def fake_run_audit(_session, _request):
+        return _no_flag_audit_result()
+
+    monkeypatch.setattr(orchestrator, "run_audit", fake_run_audit)
+
+    result = await persist_count_item(
+        session,
+        session_id=count_session.id,
+        oracle_code="HAR-001",
+        article_name="Harina de Trigo Especial 50kg",
+        raw_transcript=None,
+        quantity=3.0,
+        unit="unit",
+        homologation_score=0.9,
+        sin_homologar=False,
+        expiry_date=None,
+        is_offline=False,
+        confidence_stt=None,
+        created_by="OP-1",
+    )
+
+    assert result.sequence_in_session == 1
 
 
 async def test_unknown_oracle_code_raises():

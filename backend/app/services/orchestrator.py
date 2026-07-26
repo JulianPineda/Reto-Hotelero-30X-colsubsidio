@@ -34,6 +34,7 @@ from app.models.count_session import CountSession
 from app.schemas.events import EventType, ItemCreatedPayload
 from app.services.event_store import append_event
 from app.services.perishables import compute_traffic_light, validate_perishable_item
+from app.services.unit_compatibility import validate_unit_compatibility
 
 
 class UnknownOracleCodeError(Exception):
@@ -86,6 +87,13 @@ async def persist_count_item(
         ).scalar_one_or_none()
         if catalog_item is None:
             raise UnknownOracleCodeError(f"oracle_code {oracle_code!r} no existe en el catálogo")
+
+    # New rule: sólidos/al peso solo admiten masa o por unidad/pieza;
+    # líquidos solo admiten volumen — validated against the catalog's own
+    # canonical unit, never the caller's guess, same trust boundary as
+    # is_perishable below.
+    if catalog_item is not None:
+        validate_unit_compatibility(catalog_item.unit, catalog_item.name, unit)  # raises IncompatibleUnitError
 
     # CatalogItem.is_perishable is the source of truth, not whatever the
     # caller believes — a client (voice session or offline sync) only ever

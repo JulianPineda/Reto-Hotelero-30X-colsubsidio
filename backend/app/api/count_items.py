@@ -29,6 +29,7 @@ from app.services.orchestrator import (
     persist_count_item,
 )
 from app.services.perishables import PerishableItemMissingExpiryError
+from app.services.unit_compatibility import IncompatibleUnitError
 
 router = APIRouter(prefix="/count-items", tags=["count-items"])
 
@@ -97,6 +98,8 @@ async def create_count_item(
         raise HTTPException(
             status_code=422, detail={"error": "EXPIRY_DATE_REQUIRED", "message": str(exc)}
         ) from exc
+    except IncompatibleUnitError as exc:
+        raise HTTPException(status_code=422, detail={"error": "UNIT_MISMATCH", "message": str(exc)}) from exc
 
     await session.commit()
     return CountItemResponse.from_result(result)

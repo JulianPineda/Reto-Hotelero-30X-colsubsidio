@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { CountSessionProps } from '../CountSession';
-import { HeaderLogoutButton, PageHeader } from '../../components/PageHeader';
+import { BrandRibbon } from '../../components/BrandRibbon';
+import { HomeIcon, BackIcon, LogoutIcon } from '../../components/icons';
+import { OptionsRibbon, type RibbonAction } from '../../components/OptionsRibbon';
 import { colors, radius, shadow, touchTargets, typography } from '../../theme';
 
 export interface WarehouseSelectProps {
@@ -119,9 +121,16 @@ export function WarehouseSelect({ apiBaseUrl, wsBaseUrl, authToken, onLogout }: 
     }
   };
 
+  const actions: RibbonAction[] = [
+    { key: 'inicio', label: 'Inicio', icon: <HomeIcon />, onClick: () => navigate('/') },
+    { key: 'retroceder', label: 'Retroceder', icon: <BackIcon />, onClick: onLogout },
+    { key: 'logout', label: 'Cerrar sesión', icon: <LogoutIcon />, onClick: onLogout },
+  ];
+
   return (
     <div style={{ minHeight: '100vh', fontFamily: typography.fontFamily }}>
-      <PageHeader title="Piscilago — Conteo de Inventario" actions={<HeaderLogoutButton onClick={onLogout} />} />
+      <BrandRibbon />
+      <OptionsRibbon title="Selección de bodega y turno" actions={actions} />
 
       <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 16px' }}>
         <div

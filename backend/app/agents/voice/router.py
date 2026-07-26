@@ -17,6 +17,7 @@ from app.database import AsyncSessionLocal
 from app.services.catalog_sync import get_qdrant_client
 from app.services.orchestrator import SessionNotFoundError, UnknownOracleCodeError, persist_count_item
 from app.services.perishables import PerishableItemMissingExpiryError
+from app.services.unit_compatibility import IncompatibleUnitError
 
 router = APIRouter(tags=["voice"])
 
@@ -90,6 +91,14 @@ def _build_persist_item(session: AsyncSession, session_id: UUID, operator_id: st
                 "code": "EXPIRY_DATE_REQUIRED",
                 "message": "Este artículo requiere fecha de vencimiento.",
             }
+        except IncompatibleUnitError as exc:
+            # Unlike perishables there's no proactive re-ask state for a
+            # wrong unit — this is caught defensively at persist time and
+            # surfaces as a plain 'error' response, same as PARSE_FAILED/
+            # STT_UNAVAILABLE: the pending item is already discarded by
+            # handle_confirm before persist_item runs, so the operator
+            # redictates the whole item via a fresh PTT press.
+            return {"ok": False, "code": "UNIT_MISMATCH", "message": str(exc)}
 
         await session.commit()
         return {
